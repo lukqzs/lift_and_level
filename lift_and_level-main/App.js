@@ -178,24 +178,62 @@ function ExercisePicker({ visible, onClose, onSelect }) {
 // --- Screens ---
 
 function HomeScreen({ user, onLogout }) {
+  // Helpers
+  const getLevelProgress = (xp, level) => {
+    const currentLevelBaseXp = 50 * Math.pow(level - 1, 2);
+    const nextLevelBaseXp = 50 * Math.pow(level, 2);
+    const neededForNext = nextLevelBaseXp - currentLevelBaseXp;
+    const currentProgress = xp - currentLevelBaseXp;
+    const percent = Math.min(100, Math.max(0, (currentProgress / neededForNext) * 100));
+
+    return {
+      percent,
+      current: Math.floor(currentProgress),
+      total: Math.floor(neededForNext),
+      nextLevelXp: nextLevelBaseXp
+    };
+  };
+
+  const progress = getLevelProgress(user.xp, user.level);
+
   return (
     <View style={styles.containerCenter}>
-      <Text style={styles.title}>🏋️ Vítej, {user.name}!</Text>
-      <View style={styles.statsRow}>
-        <View style={styles.statBox}>
-          <Text style={styles.statLabel}>Level</Text>
-          <Text style={styles.statValue}>{user.level}</Text>
-        </View>
-        <View style={styles.statBox}>
-          <Text style={styles.statLabel}>XP</Text>
-          <Text style={styles.statValue}>{user.xp}</Text>
-        </View>
-        <View style={styles.statBox}>
-          <Text style={styles.statLabel}>Rank</Text>
-          <Text style={styles.statValue}>{user.rank}</Text>
-        </View>
+      <View style={styles.header}>
+        <Text style={styles.greeting}>Vítej zpět,</Text>
+        <Text style={styles.userName}>{user.name}</Text>
       </View>
-      <Button title="Odhlásit se" onPress={onLogout} color="#c1121f" />
+
+      {/* Level Card */}
+      <View style={styles.levelCard}>
+        <View style={styles.levelRow}>
+          <View>
+            <Text style={styles.levelLabel}>LEVEL</Text>
+            <Text style={styles.levelValue}>{user.level}</Text>
+          </View>
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text style={styles.rankLabel}>RANK</Text>
+            <Text style={styles.rankValue}>{user.rank}</Text>
+          </View>
+        </View>
+
+        <View style={styles.progressContainer}>
+          <View style={[styles.progressBar, { width: `${progress.percent}%` }]} />
+        </View>
+        <View style={styles.progressTextRow}>
+          <Text style={styles.xpText}>{Math.floor(user.xp)} XP</Text>
+          <Text style={styles.xpText}>{progress.nextLevelXp} XP</Text>
+        </View>
+        <Text style={styles.xpDetail}>
+          Chybí {progress.total - progress.current} XP do levelu {user.level + 1}
+        </Text>
+      </View>
+
+
+
+      <View style={{ flex: 1 }} />
+      <TouchableOpacity style={styles.logoutBtn} onPress={onLogout}>
+        <Text style={styles.logoutText}>Odhlásit se</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -268,12 +306,10 @@ function WorkoutScreen({ workouts = [], onFinishWorkout }) {
       weight: Number(weight) || 0
     };
     setSessionItems(prev => [newItem, ...prev]);
-    // Reset inputs but keep exercise selected for convenient multi-set entry? 
-    // Usually people do same exercise. Let's keep exercise but clear stats? 
-    // Or clear all. Let's clear stats.
+
     setSets("");
     setReps("");
-    // setWeight(""); // Keep weight, might be same
+
   };
 
   if (isActive) {
@@ -455,8 +491,18 @@ export default function App() {
       // Reload history
       const list = await fetchWorkouts(user.id, user.token);
       setWorkouts(list || []);
-      // Update User XP locally (rough estimate or fetch user again)
-      setUser(u => ({ ...u, xp: (u.xp || 0) + (res.xp || 0) }));
+      // Update User XP, Level, Rank locally
+      if (res.newUserStats) {
+        setUser(u => ({
+          ...u,
+          xp: res.newUserStats.totalXp,
+          level: res.newUserStats.level,
+          rank: res.newUserStats.rank
+        }));
+      } else {
+        // Fallback for older backend
+        setUser(u => ({ ...u, xp: (u.xp || 0) + (res.xp || 0) }));
+      }
     }
   };
 
@@ -510,11 +556,48 @@ const styles = StyleSheet.create({
   linkButtonText: { color: '#2d6cdf', fontSize: 16 },
   error: { color: 'red', marginBottom: 10 },
 
-  // Stats
-  statsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 30 },
-  statBox: { flex: 1, backgroundColor: '#fff', padding: 16, borderRadius: 12, marginHorizontal: 5, alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 5 },
-  statLabel: { fontSize: 12, color: '#888', textTransform: 'uppercase' },
-  statValue: { fontSize: 24, fontWeight: 'bold', color: '#2d6cdf' },
+  // Stats - REMOVE OLD STATS STYLES IF UNUSED
+  // New Home Styles
+  header: { marginBottom: 30 },
+  greeting: { fontSize: 16, color: '#888', textTransform: 'uppercase' },
+  userName: { fontSize: 32, fontWeight: '900', color: '#333' },
+
+  levelCard: {
+    backgroundColor: '#2d6cdf',
+    padding: 24,
+    borderRadius: 20,
+    shadowColor: '#2d6cdf',
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    marginBottom: 40
+  },
+  levelRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
+  levelLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: 'bold' },
+  levelValue: { color: '#fff', fontSize: 48, fontWeight: '900', lineHeight: 48 },
+  rankLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: 'bold' },
+  rankValue: { color: '#fff', fontSize: 20, fontWeight: 'bold', marginTop: 4 },
+
+  progressContainer: {
+    height: 12,
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    borderRadius: 6,
+    overflow: 'hidden',
+    marginBottom: 8
+  },
+  progressBar: {
+    height: '100%',
+    backgroundColor: '#fff',
+    borderRadius: 6
+  },
+  progressTextRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  xpText: { color: 'rgba(255,255,255,0.9)', fontSize: 12, fontWeight: '600' },
+  xpDetail: { color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 4, textAlign: 'center' },
+
+  motivationalText: { fontSize: 16, fontStyle: 'italic', color: '#666', textAlign: 'center', marginHorizontal: 30 },
+
+  logoutBtn: { padding: 16, alignItems: 'center' },
+  logoutText: { color: '#d32f2f', fontWeight: 'bold' },
 
   // Workout
   bigStartBtn: { backgroundColor: '#2d6cdf', padding: 40, borderRadius: 20, alignItems: 'center', marginVertical: 20, shadowColor: '#2d6cdf', shadowOpacity: 0.3, shadowRadius: 10 },

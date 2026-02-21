@@ -10,7 +10,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Request logging middleware
+
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
   next();
@@ -203,41 +203,55 @@ app.get("/users/:id/workouts", auth, async (req, res) => {
   }
 });
 
+
+// Helper functions for Leveling
+function calculateLevel(xp) {
+  if (xp < 0) xp = 0;
+  return Math.floor(Math.sqrt(xp / 50)) + 1;
+}
+
+function getRank(level) {
+  if (level < 5) return "Začátečník";
+  if (level < 10) return "Pokročilý";
+  if (level < 20) return "Atlet";
+  if (level < 30) return "Elita";
+  if (level < 50) return "Mistr";
+  return "Legenda";
+}
+
 app.post("/users/:id/workouts", auth, async (req, res) => {
   const { id } = req.params;
   if (Number(id) !== Number(req.userId)) return res.status(403).json({ message: "Forbidden" });
 
   console.log("POST /workouts Content-Type:", req.headers["content-type"]);
-  console.log("POST /workouts body:", JSON.stringify(req.body));
   const { items, duration, date } = req.body || {};
 
   if (!items || !Array.isArray(items) || items.length === 0 || !date) {
     return res.status(400).json({ message: "items (array), date jsou povinné" });
   }
 
-  // Calculate total XP
-  let totalXp = 0;
+  // Calculate total XP for this workout
+  let workoutXp = 0;
   items.forEach(item => {
     // item: { name, sets, reps, weight }
     const vol = Number(item.sets) * Number(item.reps) * (Number(item.weight) || 1);
     const itemXp = Math.max(10, Math.ceil(vol / 10));
-    item.xp = itemXp; // Add xp to item for saving
-    totalXp += itemXp;
+    item.xp = itemXp;
+    workoutXp += itemXp;
   });
-
-  // Calculate duration XP bonus? (Optional, user didn't ask, but good practice). Let's stick to simple volume XP for now.
 
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
 
+    // 1. Insert Workout
     const [workoutResult] = await conn.execute(
       "INSERT INTO workouts_v2 (user_id, workout_date, total_xp, duration) VALUES (?, ?, ?, ?)",
-      [id, date, totalXp, duration || 0]
+      [id, date, workoutXp, duration || 0]
     );
-
     const workoutId = workoutResult.insertId;
 
+    // 2. Insert Exercises
     for (const item of items) {
       await conn.execute(
         "INSERT INTO exercises_v2 (workout_id, name, sets, reps, weight_kg, xp) VALUES (?, ?, ?, ?, ?, ?)",
@@ -245,18 +259,42 @@ app.post("/users/:id/workouts", auth, async (req, res) => {
       );
     }
 
-    await conn.execute("UPDATE users_v2 SET xp = xp + ? WHERE id = ?", [totalXp, id]);
+    // 3. Update User XP, Level, Rank
+    // First, fetch current XP to calculate properly
+    const [users] = await conn.execute("SELECT xp FROM users_v2 WHERE id = ? FOR UPDATE", [id]);
+    if (users.length > 0) {
+      const currentXp = users[0].xp || 0;
+      const newTotalXp = currentXp + workoutXp;
+      const newLevel = calculateLevel(newTotalXp);
+      const newRank = getRank(newLevel);
 
-    await conn.commit();
+      await conn.execute(
+        "UPDATE users_v2 SET xp = ?, level = ?, rank = ? WHERE id = ?",
+        [newTotalXp, newLevel, newRank, id]
+      );
 
-    res.status(201).json({
-      id: workoutId,
-      userId: Number(id),
-      date,
-      duration,
-      xp: totalXp,
-      items
-    });
+      // Return new stats
+      await conn.commit();
+
+      res.status(201).json({
+        id: workoutId,
+        userId: Number(id),
+        date,
+        duration,
+        xp: workoutXp,
+        newUserStats: {
+          level: newLevel,
+          rank: newRank,
+          totalXp: newTotalXp
+        },
+        items
+      });
+    } else {
+      // Should not happen if auth passed
+      await conn.rollback();
+      res.status(404).json({ message: "User not found" });
+    }
+
   } catch (error) {
     await conn.rollback();
     console.error("POST workout error", error);
@@ -265,6 +303,7 @@ app.post("/users/:id/workouts", auth, async (req, res) => {
     conn.release();
   }
 });
+
 
 // Search exercises (Public)
 app.get("/exercises", async (req, res) => {

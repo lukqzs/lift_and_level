@@ -1,6 +1,22 @@
 
-const BACKEND_IP = "10.0.1.43";
-const baseUrl = process.env.EXPO_PUBLIC_API_URL || `http://${BACKEND_IP}:3000`;
+import Constants from "expo-constants";
+
+const getBaseUrl = () => {
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL;
+  }
+
+
+  const hostUri = Constants.expoConfig?.hostUri;
+  if (hostUri) {
+    const ip = hostUri.split(':')[0];
+    return `http://${ip}:3000`; // Předpokládá backend na portu 3000
+  }
+
+  return "http://localhost:3000";
+};
+
+const baseUrl = getBaseUrl();
 
 async function request(path, options = {}) {
   try {
