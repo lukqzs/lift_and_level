@@ -16,9 +16,11 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { NavigationContainer } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { enableScreens } from "react-native-screens";
+import Body from "react-native-body-highlighter";
 
 import { addWorkout, fetchWorkouts, login, register, searchExercises } from "./services/api";
 
@@ -177,7 +179,20 @@ function ExercisePicker({ visible, onClose, onSelect }) {
 
 // --- Screens ---
 
+// --- Motivation Quotes Setup ---
+const MOTIVATIONAL_QUOTES = [
+  "Tvoje jediné limity jsou ty, které si sám vytvoříš.",
+  "Dnes udělej něco, za co ti tvé budoucí já poděkuje.",
+  "Nezastavuj se, když jsi unavený. Zastav se, až když jsi hotový.",
+  "Cesta dlouhá tisíc mil začíná prvním krokem.",
+  "Bolest, kterou cítíš dnes, je síla, kterou ucítíš zítra.",
+  "Zvedni víc než včera!",
+  "Každé opakování se počítá, i to co bolí nejvíc."
+];
+
 function HomeScreen({ user, onLogout }) {
+  const [motivationalQuote] = useState(() => MOTIVATIONAL_QUOTES[Math.floor(Math.random() * MOTIVATIONAL_QUOTES.length)]);
+
   // Helpers
   const getLevelProgress = (xp, level) => {
     const currentLevelBaseXp = 50 * Math.pow(level - 1, 2);
@@ -203,7 +218,6 @@ function HomeScreen({ user, onLogout }) {
         <Text style={styles.userName}>{user.name}</Text>
       </View>
 
-      {/* Level Card */}
       <View style={styles.levelCard}>
         <View style={styles.levelRow}>
           <View>
@@ -228,7 +242,11 @@ function HomeScreen({ user, onLogout }) {
         </Text>
       </View>
 
-
+      {/* Motivational Quote */}
+      <View style={styles.quoteCard}>
+        <Text style={styles.quoteLabel}>Motivace pro dnešek</Text>
+        <Text style={styles.motivationalQuote}>"{motivationalQuote}"</Text>
+      </View>
 
       <View style={{ flex: 1 }} />
       <TouchableOpacity style={styles.logoutBtn} onPress={onLogout}>
@@ -425,12 +443,75 @@ function WorkoutScreen({ workouts = [], onFinishWorkout }) {
 
 // --- Additional Screens ---
 
-function ProgressScreen() {
+// --- Progress / Figure Visualization ---
+function ProgressScreen({ workouts }) {
+  const [exercisesData, setExercisesData] = useState([]);
+
+  useEffect(() => {
+    searchExercises("").then(setExercisesData);
+  }, []);
+
+  const getMuscleData = () => {
+    const slugCounts = {};
+    const now = new Date();
+
+    workouts.forEach(w => {
+      const wDate = new Date(w.date);
+      const diff = (now - wDate) / (1000 * 60 * 60 * 24);
+      if (diff <= 7) {
+        (w.items || []).forEach(ex => {
+          let sets = Number(ex.sets) || 0;
+          const found = exercisesData.find(e => {
+            if (!e || !e.name || !ex || !ex.name) return false;
+            return e.name.toLowerCase() === ex.name.toLowerCase();
+          });
+          if (found && found.muscles) {
+            found.muscles.forEach(slug => {
+              slugCounts[slug] = (slugCounts[slug] || 0) + sets;
+            });
+          }
+        });
+      }
+    });
+
+    return Object.entries(slugCounts).map(([slug, count]) => {
+      let intensity = 1;
+      if (count > 0) intensity = 1; // Light
+      if (count >= 5) intensity = 2; // Medium
+      if (count >= 10) intensity = 3; // Heavy
+      return { slug, intensity };
+    });
+  };
+
+  const bodyData = getMuscleData();
+  const colors = ['#ffcdd2', '#ef5350', '#c62828'];
+
   return (
-    <View style={styles.containerCenter}>
-      <Text style={styles.title}>📈 Progress</Text>
-      <Text>Fotky, graf váhy a vývoj postavy (Coming Soon)</Text>
-    </View>
+    <ScrollView style={{ flex: 1, backgroundColor: '#f2f2f7' }} contentContainerStyle={{ padding: 16 }}>
+      <Text style={[styles.title, { textAlign: 'center' }]}>🏋️‍♂️ Vývoj postavy</Text>
+      <Text style={{ textAlign: 'center', marginBottom: 20, color: '#666' }}>
+        Svalové partie se vybarvují podle intenzity tréninků (počet sérií) za posledních 7 dní.
+        Jednotlivé svaly jsou mapovány přes veřejné Wger API.
+      </Text>
+
+      <View style={{ flexDirection: 'row', justifyContent: 'space-evenly', flexWrap: 'wrap', marginTop: 10 }}>
+        <View style={{ alignItems: 'center', marginBottom: 20 }}>
+          <Text style={{ fontWeight: 'bold', marginBottom: 15, color: '#444' }}>Zepředu</Text>
+          <Body data={bodyData} side="front" scale={1.2} gender="male" colors={colors} />
+        </View>
+        <View style={{ alignItems: 'center' }}>
+          <Text style={{ fontWeight: 'bold', marginBottom: 15, color: '#444' }}>Zezadu</Text>
+          <Body data={bodyData} side="back" scale={1.2} gender="male" colors={colors} />
+        </View>
+      </View>
+
+      <View style={styles.legendBox}>
+        <View style={styles.legendItem}><View style={[styles.colorBox, { backgroundColor: '#e0e0e0' }]} /><Text>Netrénováno</Text></View>
+        <View style={styles.legendItem}><View style={[styles.colorBox, { backgroundColor: '#ffcdd2' }]} /><Text>Lehký tr. (1-4 série)</Text></View>
+        <View style={styles.legendItem}><View style={[styles.colorBox, { backgroundColor: '#ef5350' }]} /><Text>Střední tr. (5-9 s.)</Text></View>
+        <View style={styles.legendItem}><View style={[styles.colorBox, { backgroundColor: '#c62828' }]} /><Text>Těžký tr. (10+ s.)</Text></View>
+      </View>
+    </ScrollView>
   );
 }
 
@@ -444,10 +525,59 @@ function AchievementsScreen() {
 }
 
 function ProfileScreen() {
+  const [goalType, setGoalType] = useState('Síla');
+  const [goalText, setGoalText] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    AsyncStorage.getItem('@personal_goal').then(str => {
+      if (str) {
+        try {
+          const parsed = JSON.parse(str);
+          setGoalType(parsed.type || 'Síla');
+          setGoalText(parsed.text || '');
+        } catch (e) { }
+      }
+    });
+  }, []);
+
+  const saveGoal = async () => {
+    await AsyncStorage.setItem('@personal_goal', JSON.stringify({ type: goalType, text: goalText }));
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  const types = ['Síla', 'Váha', 'Osobní'];
+
   return (
-    <View style={styles.containerCenter}>
-      <Text style={styles.title}>👤 Profil</Text>
-      <Text>Cíle, doplňky a nastavení</Text>
+    <View style={styles.container}>
+      <Text style={styles.title}>🎯 Osobní Cíle</Text>
+
+      <View style={styles.card}>
+        <Text style={{ fontWeight: 'bold', fontSize: 16, marginBottom: 10 }}>Vyber si zaměření:</Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginBottom: 20 }}>
+          {types.map(t => (
+            <TouchableOpacity
+              key={t}
+              style={[styles.goalTypeBtn, goalType === t && styles.goalTypeBtnActive]}
+              onPress={() => setGoalType(t)}
+            >
+              <Text style={[styles.goalTypeBtnText, goalType === t && { color: '#fff' }]}>{t}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={{ fontWeight: 'bold', fontSize: 16, marginBottom: 10 }}>Tvůj konkrétní cíl:</Text>
+        <TextInput
+          style={[styles.input, { height: 100, textAlignVertical: 'top' }]}
+          placeholder="Např: Zvednout na bench-press 100kg..."
+          multiline
+          value={goalText}
+          onChangeText={setGoalText}
+        />
+        <TouchableOpacity style={styles.primaryButton} onPress={saveGoal}>
+          <Text style={styles.primaryButtonText}>{saved ? "Uloženo ✔️" : "Uložit cíl"}</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -485,24 +615,28 @@ export default function App() {
 
   const handleFinishWorkout = async (payload) => {
     if (!user) return;
-    // Optimistic UI update or wait? Let's wait.
-    const res = await addWorkout(user.id, payload, user.token);
-    if (res) {
-      // Reload history
-      const list = await fetchWorkouts(user.id, user.token);
-      setWorkouts(list || []);
-      // Update User XP, Level, Rank locally
-      if (res.newUserStats) {
-        setUser(u => ({
-          ...u,
-          xp: res.newUserStats.totalXp,
-          level: res.newUserStats.level,
-          rank: res.newUserStats.rank
-        }));
-      } else {
-        // Fallback for older backend
-        setUser(u => ({ ...u, xp: (u.xp || 0) + (res.xp || 0) }));
+    try {
+      // Optimistic UI update or wait? Let's wait.
+      const res = await addWorkout(user.id, payload, user.token);
+      if (res) {
+        // Reload history
+        const list = await fetchWorkouts(user.id, user.token);
+        setWorkouts(list || []);
+        // Update User XP, Level, Rank locally
+        if (res.newUserStats) {
+          setUser(u => ({
+            ...u,
+            xp: res.newUserStats.totalXp,
+            level: res.newUserStats.level,
+            rank: res.newUserStats.rank
+          }));
+        } else {
+          // Fallback for older backend
+          setUser(u => ({ ...u, xp: (u.xp || 0) + (res.xp || 0) }));
+        }
       }
+    } catch (e) {
+      Alert.alert("Chyba při ukládání", "Trénink se nepovedlo odeslat: " + e.message);
     }
   };
 
@@ -532,9 +666,11 @@ export default function App() {
                 />
               )}
             </Tab.Screen>
-            <Tab.Screen name="Progress" component={ProgressScreen} />
+            <Tab.Screen name="Progress">
+              {() => <ProgressScreen workouts={workouts} />}
+            </Tab.Screen>
             <Tab.Screen name="Ocenění" component={AchievementsScreen} />
-            <Tab.Screen name="Profil" component={ProfileScreen} />
+            <Tab.Screen name="Cíle" component={ProfileScreen} />
           </Tab.Navigator>
         </NavigationContainer>
       </SafeAreaProvider>
@@ -633,5 +769,20 @@ const styles = StyleSheet.create({
   historyHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
   historyDate: { color: '#888', fontSize: 14 },
   historyXp: { color: '#2d6cdf', fontWeight: 'bold' },
-  historySubtitle: { fontSize: 16, fontWeight: '600', marginBottom: 4 }
+  historySubtitle: { fontSize: 16, fontWeight: '600', marginBottom: 4 },
+
+  // Legend
+  legendBox: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 30, backgroundColor: '#fff', padding: 10, borderRadius: 12 },
+  legendItem: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 10, marginVertical: 5 },
+  colorBox: { width: 16, height: 16, borderRadius: 4, marginRight: 6 },
+
+  // Goals
+  goalTypeBtn: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 20, backgroundColor: '#eee' },
+  goalTypeBtnActive: { backgroundColor: '#2d6cdf' },
+  goalTypeBtnText: { fontWeight: '600', color: '#555' },
+
+  // Quotes
+  quoteCard: { backgroundColor: '#fff', padding: 20, borderRadius: 16, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, alignItems: 'center', marginBottom: 20 },
+  quoteLabel: { color: '#2d6cdf', fontWeight: 'bold', marginBottom: 8, fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 },
+  motivationalQuote: { fontSize: 16, fontStyle: 'italic', color: '#444', textAlign: 'center', fontWeight: '500' },
 });

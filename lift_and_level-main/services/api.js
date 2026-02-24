@@ -79,19 +79,66 @@ export async function addWorkout(userId, workout, token) {
   return data;
 }
 
+const EXERCISE_CATALOG = [
+  // Hrudník (Chest)
+  { id: 1, name: "Bench Press", muscles: ["chest", "triceps", "deltoids"] },
+  { id: 2, name: "Tlaky s jednoručkami", muscles: ["chest", "triceps", "deltoids"] },
+  { id: 3, name: "Kliky (Push-up)", muscles: ["chest", "triceps", "deltoids"] },
+  { id: 4, name: "Rozpažování (Chest Fly)", muscles: ["chest"] },
+  { id: 5, name: "Protisměrné kladky", muscles: ["chest"] },
+  { id: 6, name: "Tlaky na šikmé lavici", muscles: ["chest", "triceps", "deltoids"] },
+  { id: 7, name: "Dipy (Hrudník)", muscles: ["chest", "triceps", "deltoids"] },
+  { id: 8, name: "Pec Deck", muscles: ["chest"] },
+
+  // Záda (Back)
+  { id: 20, name: "Mrtvý tah (Deadlift)", muscles: ["lower-back", "gluteal", "hamstring", "trapezius"] },
+  { id: 21, name: "Shyby (Pull-up)", muscles: ["upper-back", "biceps", "forearm", "trapezius"] },
+  { id: 22, name: "Přítahy činky v předklonu", muscles: ["upper-back", "biceps", "lower-back"] },
+  { id: 23, name: "Stahování horní kladky", muscles: ["upper-back", "biceps"] },
+  { id: 24, name: "Přítahy spodní kladky", muscles: ["upper-back", "biceps"] },
+  { id: 25, name: "Shyby podhmatem (Chin-up)", muscles: ["upper-back", "biceps"] },
+  { id: 26, name: "Veslování na trenažéru", muscles: ["upper-back", "biceps", "trapezius"] },
+  { id: 27, name: "Přítahy jednoručky", muscles: ["upper-back", "biceps"] },
+
+  // Nohy (Legs)
+  { id: 40, name: "Dřep (Squat)", muscles: ["quadriceps", "gluteal", "calves", "hamstring"] },
+  { id: 41, name: "Leg Press", muscles: ["quadriceps", "gluteal", "calves"] },
+  { id: 42, name: "Výpady", muscles: ["quadriceps", "gluteal"] },
+  { id: 43, name: "Předkopávání", muscles: ["quadriceps"] },
+  { id: 44, name: "Zakopávání", muscles: ["hamstring"] },
+  { id: 45, name: "Výpony na lýtka", muscles: ["calves"] },
+  { id: 46, name: "Bulharské dřepy", muscles: ["quadriceps", "gluteal"] },
+  { id: 47, name: "Rumunský mrtvý tah", muscles: ["hamstring", "gluteal", "lower-back"] },
+  { id: 48, name: "Hip Thrust", muscles: ["gluteal", "hamstring"] },
+
+  // Ramena (Shoulders)
+  { id: 60, name: "Tlaky nad hlavu (Military Press)", muscles: ["deltoids", "triceps", "trapezius"] },
+  { id: 61, name: "Tlaky s jednoručkami vsedě", muscles: ["deltoids", "triceps"] },
+  { id: 62, name: "Upažování (Lateral Raise)", muscles: ["deltoids"] },
+  { id: 63, name: "Předpažování", muscles: ["deltoids"] },
+  { id: 64, name: "Zapažování (Rear Delt Fly)", muscles: ["deltoids", "upper-back"] },
+  { id: 65, name: "Přítahy k bradě", muscles: ["deltoids", "trapezius"] },
+
+  // Ruce (Arms)
+  { id: 80, name: "Bicepsový zdvih", muscles: ["biceps", "forearm"] },
+  { id: 81, name: "Kladivový zdvih (Hammer)", muscles: ["biceps", "forearm"] },
+  { id: 82, name: "Biceps na Scottově lavici", muscles: ["biceps"] },
+  { id: 83, name: "Francouzský tlak", muscles: ["triceps"] },
+  { id: 84, name: "Tricepsové stahování kladky", muscles: ["triceps"] },
+  { id: 85, name: "Tricepsové kliky vzadu", muscles: ["triceps", "chest"] },
+  { id: 86, name: "Biceps s velkou činkou", muscles: ["biceps"] },
+
+  // Břicho a střed těla
+  { id: 100, name: "Zkracovačky", muscles: ["abs"] },
+  { id: 101, name: "Sedy-lehy", muscles: ["abs"] },
+  { id: 102, name: "Plank", muscles: ["abs", "obliques", "lower-back"] },
+  { id: 103, name: "Zvedání nohou ve visu", muscles: ["abs"] },
+  { id: 104, name: "Russian Twist", muscles: ["abs", "obliques"] },
+  { id: 105, name: "Ab Wheel", muscles: ["abs", "lower-back"] }
+];
+
 export async function searchExercises(query = "") {
-  const data = await request(`/exercises?q=${encodeURIComponent(query)}`);
-  if (data && Array.isArray(data)) return data;
-
-
-  const catalog = [
-    { id: 1, name: "Bench Press" },
-    { id: 2, name: "Squat" },
-    { id: 3, name: "Deadlift" },
-    { id: 4, name: "Overhead Press" },
-    { id: 5, name: "Pull Up" },
-  ];
-  if (!query) return catalog;
+  if (!query) return EXERCISE_CATALOG;
   const q = query.toLowerCase();
-  return catalog.filter((item) => item.name.toLowerCase().includes(q));
+  return EXERCISE_CATALOG.filter(item => item.name.toLowerCase().includes(q));
 }
