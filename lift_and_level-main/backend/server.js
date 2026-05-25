@@ -1,4 +1,4 @@
-﻿const express = require("express");
+const express = require("express");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
@@ -9,7 +9,6 @@ require("dotenv").config();
 const app = express();
 app.use(cors());
 app.use(express.json());
-
 
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
@@ -40,7 +39,6 @@ async function query(sql, params) {
   return rows;
 }
 
-// Auth Middleware
 function auth(req, res, next) {
   const header = req.headers.authorization || "";
   const [, token] = header.split(" ");
@@ -54,8 +52,6 @@ function auth(req, res, next) {
   }
 }
 
-// --- Routes ---
-
 app.post("/auth/login", async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) {
@@ -63,17 +59,14 @@ app.post("/auth/login", async (req, res) => {
   }
 
   try {
-    // 1. Check if user exists
     const users = await query("SELECT * FROM users_v2 WHERE email = ? LIMIT 1", [email]);
     if (!users.length) {
-      // REQUIREMENT: Specific message "user needs to register"
       return res.status(404).json({
         message: "Uživatel s tímto e-mailem neexistuje. Prosím, zaregistrujte se.",
         code: "USER_NOT_FOUND"
       });
     }
 
-    // 2. Check password
     const user = users[0];
     const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) {
@@ -106,7 +99,6 @@ app.post("/auth/register", async (req, res) => {
   try {
     const existing = await query("SELECT id FROM users_v2 WHERE email = ? LIMIT 1", [email]);
     if (existing.length) {
-      // REQUIREMENT: "User already exists, please login"
       return res.status(409).json({
         message: "Účet s tímto e-mailem už existuje. Prosím, přihlašte se.",
         code: "USER_EXISTS"
@@ -142,9 +134,6 @@ app.get("/users/:id/workouts", auth, async (req, res) => {
   if (Number(id) !== Number(req.userId)) return res.status(403).json({ message: "Forbidden" });
 
   try {
-    // Return structured workouts: [ { id, date, duration, total_xp, items: [ { name, sets, reps... } ] } ]
-
-    // 1. Get workouts
     const workouts = await query(
       "SELECT id, workout_date, duration, total_xp FROM workouts_v2 WHERE user_id = ? ORDER BY workout_date DESC",
       [id]
@@ -154,23 +143,19 @@ app.get("/users/:id/workouts", auth, async (req, res) => {
       return res.json([]);
     }
 
-    // 2. Get exercises for these workouts
-    // Using simple approach: fetch all exercises for these workout IDs
     const workoutIds = workouts.map(w => w.id);
     if (workoutIds.length > 0) {
-      // Create safe placeholder string (?, ?, ?)
       const placeholders = workoutIds.map(() => '?').join(',');
       const exercises = await query(
         `SELECT id, workout_id, name, sets, reps, weight_kg, xp FROM exercises_v2 WHERE workout_id IN (${placeholders}) ORDER BY id ASC`,
         workoutIds
       );
 
-      // 3. Group
       const workoutsMap = {};
       workouts.forEach(w => {
         workoutsMap[w.id] = {
           id: w.id,
-          date: new Date(w.workout_date).toISOString().slice(0, 10), // Format YYYY-MM-DD
+          date: new Date(w.workout_date).toISOString().slice(0, 10),
           duration: w.duration,
           xp: w.total_xp,
           items: []
@@ -190,7 +175,6 @@ app.get("/users/:id/workouts", auth, async (req, res) => {
         }
       });
 
-      // Convert map back to list (sorted by date desc as originally queried)
       const result = workouts.map(w => workoutsMap[w.id]);
       res.json(result);
     } else {
@@ -203,8 +187,6 @@ app.get("/users/:id/workouts", auth, async (req, res) => {
   }
 });
 
-
-// Helper functions for Leveling
 function calculateLevel(xp) {
   if (xp < 0) xp = 0;
   return Math.floor(Math.sqrt(xp / 50)) + 1;
@@ -224,34 +206,33 @@ app.post("/users/:id/workouts", auth, async (req, res) => {
   if (Number(id) !== Number(req.userId)) return res.status(403).json({ message: "Forbidden" });
 
   console.log("POST /workouts Content-Type:", req.headers["content-type"]);
-  const { items, duration, date } = req.body || {};
+  const { items, duration, date, boostPercentage } = req.body || {};
 
   if (!items || !Array.isArray(items) || items.length === 0 || !date) {
     return res.status(400).json({ message: "items (array), date jsou povinné" });
   }
 
-  // Calculate total XP for this workout
-  let workoutXp = 0;
+  let baseWorkoutXp = 0;
   items.forEach(item => {
-    // item: { name, sets, reps, weight }
     const vol = Number(item.sets) * Number(item.reps) * (Number(item.weight) || 1);
     const itemXp = Math.max(10, Math.ceil(vol / 10));
     item.xp = itemXp;
-    workoutXp += itemXp;
+    baseWorkoutXp += itemXp;
   });
+
+  const finalMult = 1 + (Number(boostPercentage) || 0) / 100;
+  const workoutXp = Math.floor(baseWorkoutXp * finalMult);
 
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
 
-    // 1. Insert Workout
     const [workoutResult] = await conn.execute(
       "INSERT INTO workouts_v2 (user_id, workout_date, total_xp, duration) VALUES (?, ?, ?, ?)",
       [id, date, workoutXp, duration || 0]
     );
     const workoutId = workoutResult.insertId;
 
-    // 2. Insert Exercises
     for (const item of items) {
       await conn.execute(
         "INSERT INTO exercises_v2 (workout_id, name, sets, reps, weight_kg, xp) VALUES (?, ?, ?, ?, ?, ?)",
@@ -259,8 +240,6 @@ app.post("/users/:id/workouts", auth, async (req, res) => {
       );
     }
 
-    // 3. Update User XP, Level, Rank
-    // First, fetch current XP to calculate properly
     const [users] = await conn.execute("SELECT xp FROM users_v2 WHERE id = ? FOR UPDATE", [id]);
     if (users.length > 0) {
       const currentXp = users[0].xp || 0;
@@ -273,7 +252,6 @@ app.post("/users/:id/workouts", auth, async (req, res) => {
         [newTotalXp, newLevel, newRank, id]
       );
 
-      // Return new stats
       await conn.commit();
 
       res.status(201).json({
@@ -290,7 +268,6 @@ app.post("/users/:id/workouts", auth, async (req, res) => {
         items
       });
     } else {
-      // Should not happen if auth passed
       await conn.rollback();
       res.status(404).json({ message: "User not found" });
     }
@@ -304,16 +281,8 @@ app.post("/users/:id/workouts", auth, async (req, res) => {
   }
 });
 
-
-// Search exercises (Public)
 app.get("/exercises", async (req, res) => {
   const q = req.query.q || "";
-  // We can just return hardcoded list or search in saved exercises?
-  // User requirement: "vybírat z databáze cviků"
-  // Let's keep the hardcoded catalog for now or distinct from DB.
-  // The DB only stores history.
-  // Let's use the static catalog + maybe any custom names found in DB? 
-  // For simplicity and speed, let's keep the static list but extended.
 
   const catalog = [
     { id: 1, name: "Bench Press" },
@@ -335,6 +304,59 @@ app.get("/exercises", async (req, res) => {
 });
 
 app.get("/health", (req, res) => res.json({ ok: true }));
+
+const FALLBACK_QUOTES = [
+  { quote: "Tvoje jediné limity jsou ty, které si sám vytvoříš.", author: "Neznámý" },
+  { quote: "Dnes udělej něco, za co ti tvé budoucí já poděkuje.", author: "Neznámý" },
+  { quote: "Nezastavuj se, když jsi unavený. Zastav se, až když jsi hotový.", author: "David Goggins" }
+];
+
+app.get("/quotes/random", async (req, res) => {
+  try {
+    const response = await fetch("https://zenquotes.io/api/random");
+
+    if (!response.ok) {
+      throw new Error(`ZenQuotes returned ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (data && data.length > 0) {
+      res.json({ quote: data[0].q, author: data[0].a });
+    } else {
+      throw new Error("No quotes returned");
+    }
+  } catch (error) {
+    console.error("Error fetching quote from ZenQuotes:", error.message);
+    const fallback = FALLBACK_QUOTES[Math.floor(Math.random() * FALLBACK_QUOTES.length)];
+    res.json(fallback);
+  }
+});
+
+app.post("/users/:id/add-xp", auth, async (req, res) => {
+  const { id } = req.params;
+  const { xp } = req.body;
+  if (Number(id) !== Number(req.userId)) return res.status(403).json({ message: "Forbidden" });
+
+  const conn = await pool.getConnection();
+  try {
+    const [users] = await conn.execute("SELECT xp FROM users_v2 WHERE id = ? FOR UPDATE", [id]);
+    if (users.length > 0) {
+      const newTotalXp = (users[0].xp || 0) + Number(xp || 0);
+      const newLevel = calculateLevel(newTotalXp);
+      const newRank = getRank(newLevel);
+
+      await conn.execute("UPDATE users_v2 SET xp = ?, level = ?, rank = ? WHERE id = ?", [newTotalXp, newLevel, newRank, id]);
+      res.json({ totalXp: newTotalXp, level: newLevel, rank: newRank });
+    } else {
+      res.status(404).json({ message: "User not found" });
+    }
+  } catch (err) {
+    console.error("POST /add-xp error", err);
+    res.status(500).json({ message: "Server error" });
+  } finally {
+    conn.release();
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);

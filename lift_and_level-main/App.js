@@ -1,4 +1,3 @@
-
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import {
   StyleSheet,
@@ -11,18 +10,24 @@ import {
   ActivityIndicator,
   Modal,
   FlatList,
-  Alert
+  Alert,
+  Keyboard,
+  Image,
+  Dimensions
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import { NavigationContainer } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { enableScreens } from "react-native-screens";
+import { LineChart } from "react-native-chart-kit";
 import Body from "react-native-body-highlighter";
 
-import { addWorkout, fetchWorkouts, login, register, searchExercises } from "./services/api";
+import { addWorkout, fetchWorkouts, login, register, searchExercises, fetchRandomQuote, addXp } from "./services/api";
 
 enableScreens();
 
@@ -180,18 +185,20 @@ function ExercisePicker({ visible, onClose, onSelect }) {
 // --- Screens ---
 
 // --- Motivation Quotes Setup ---
-const MOTIVATIONAL_QUOTES = [
-  "Tvoje jediné limity jsou ty, které si sám vytvoříš.",
-  "Dnes udělej něco, za co ti tvé budoucí já poděkuje.",
-  "Nezastavuj se, když jsi unavený. Zastav se, až když jsi hotový.",
-  "Cesta dlouhá tisíc mil začíná prvním krokem.",
-  "Bolest, kterou cítíš dnes, je síla, kterou ucítíš zítra.",
-  "Zvedni víc než včera!",
-  "Každé opakování se počítá, i to co bolí nejvíc."
-];
-
 function HomeScreen({ user, onLogout }) {
-  const [motivationalQuote] = useState(() => MOTIVATIONAL_QUOTES[Math.floor(Math.random() * MOTIVATIONAL_QUOTES.length)]);
+  const [motivationalQuote, setMotivationalQuote] = useState("Načítám motivaci...");
+
+  useEffect(() => {
+    fetchRandomQuote()
+      .then(data => {
+        if (data && data.quote) {
+          setMotivationalQuote(`${data.quote}\n— ${data.author}`);
+        } else {
+          setMotivationalQuote("Zvedni víc než včera!");
+        }
+      })
+      .catch(() => setMotivationalQuote("Zvedni víc než včera!"));
+  }, []);
 
   // Helpers
   const getLevelProgress = (xp, level) => {
@@ -491,7 +498,6 @@ function ProgressScreen({ workouts }) {
       <Text style={[styles.title, { textAlign: 'center' }]}>🏋️‍♂️ Vývoj postavy</Text>
       <Text style={{ textAlign: 'center', marginBottom: 20, color: '#666' }}>
         Svalové partie se vybarvují podle intenzity tréninků (počet sérií) za posledních 7 dní.
-        Jednotlivé svaly jsou mapovány přes veřejné Wger API.
       </Text>
 
       <View style={{ flexDirection: 'row', justifyContent: 'space-evenly', flexWrap: 'wrap', marginTop: 10 }}>
@@ -515,11 +521,230 @@ function ProgressScreen({ workouts }) {
   );
 }
 
-function AchievementsScreen() {
+function getPRRank(weight) {
+  if (weight >= 180) return "👑 Champion";
+  if (weight >= 150) return "💎 Diamond";
+  if (weight >= 120) return "⭐ Platinum";
+  if (weight >= 100) return "🥇 Gold";
+  if (weight >= 80) return "🥈 Silver";
+  if (weight >= 50) return "🥉 Bronze";
+  return "Nováček";
+}
+
+function AchievementsScreen({ workouts, user, onUpdateUser }) {
+  const [claimedRewards, setClaimedRewards] = useState({});
+  const [claiming, setClaiming] = useState(false);
+
+  useEffect(() => {
+    AsyncStorage.getItem('@claimed_rewards').then(res => {
+      if (res) setClaimedRewards(JSON.parse(res));
+    });
+  }, []);
+
+  const claim = async (id, xpAmount) => {
+    if (claiming || claimedRewards[id]) return;
+    setClaiming(true);
+    try {
+      const newStats = await addXp(user.id, xpAmount, user.token);
+      onUpdateUser(newStats);
+
+      const newClaimed = { ...claimedRewards, [id]: true };
+      setClaimedRewards(newClaimed);
+      await AsyncStorage.setItem('@claimed_rewards', JSON.stringify(newClaimed));
+      Alert.alert("Úspěch", `Gratulujeme! Získal(a) jsi ${xpAmount} XP.`);
+    } catch (e) {
+      Alert.alert("Chyba", "Nepodařilo se připsat XP.");
+    } finally {
+      setClaiming(false);
+    }
+  };
+
+  const renderReward = (id, xp, condition, title) => {
+    const isUnlocked = condition;
+    const isClaimed = claimedRewards[id];
+    return (
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <Text style={{ fontSize: 16, flex: 1, paddingRight: 10 }}>
+          {isUnlocked ? "✅" : "❌"} {title}
+        </Text>
+        {isUnlocked && !isClaimed && (
+          <TouchableOpacity onPress={() => claim(id, xp)} style={{ backgroundColor: '#ff9800', padding: 8, borderRadius: 8 }}>
+            <Text style={{ color: '#fff', fontWeight: 'bold' }}>Získat {xp} XP</Text>
+          </TouchableOpacity>
+        )}
+        {isClaimed && <Text style={{ color: '#2d6cdf', fontWeight: 'bold' }}>Vybráno</Text>}
+      </View>
+    );
+  };
+
+  const prs = useMemo(() => {
+    let bench = 0, squat = 0, deadlift = 0;
+    (workouts || []).forEach(w => {
+      (w.items || []).forEach(ex => {
+        const name = ex.name.toLowerCase();
+        const weight = Number(ex.weight) || 0;
+        if (name.includes('bench')) bench = Math.max(bench, weight);
+        if (name.includes('dřep') || name.includes('squat')) squat = Math.max(squat, weight);
+        if (name.includes('mrtvý tah') || name.includes('deadlift')) deadlift = Math.max(deadlift, weight);
+      });
+    });
+    return { bench, squat, deadlift };
+  }, [workouts]);
+
+  const workoutCount = workouts?.length || 0;
+
   return (
-    <View style={styles.containerCenter}>
-      <Text style={styles.title}>🏆 Ocenění</Text>
-      <Text>Osobní rekordy a výzvy (Coming Soon)</Text>
+    <ScrollView style={styles.container}>
+      <Text style={styles.title}>🏆 Ocenění a Výzvy</Text>
+
+      <Text style={styles.subtitle}>Osobní rekordy (PRs)</Text>
+      <View style={styles.card}>
+        <View style={styles.row}>
+          <Text style={{ fontSize: 16, flex: 1 }}>Bench Press:</Text>
+          <Text style={{ fontSize: 16, fontWeight: 'bold' }}>{prs.bench > 0 ? `${prs.bench} kg` : '-- kg'}</Text>
+          <Text style={{ fontSize: 14, color: '#666', width: 100, textAlign: 'right' }}>{getPRRank(prs.bench)}</Text>
+        </View>
+        <View style={styles.row}>
+          <Text style={{ fontSize: 16, flex: 1 }}>Dřep:</Text>
+          <Text style={{ fontSize: 16, fontWeight: 'bold' }}>{prs.squat > 0 ? `${prs.squat} kg` : '-- kg'}</Text>
+          <Text style={{ fontSize: 14, color: '#666', width: 100, textAlign: 'right' }}>{getPRRank(prs.squat)}</Text>
+        </View>
+        <View style={styles.row}>
+          <Text style={{ fontSize: 16, flex: 1 }}>Mrtvý tah:</Text>
+          <Text style={{ fontSize: 16, fontWeight: 'bold' }}>{prs.deadlift > 0 ? `${prs.deadlift} kg` : '-- kg'}</Text>
+          <Text style={{ fontSize: 14, color: '#666', width: 100, textAlign: 'right' }}>{getPRRank(prs.deadlift)}</Text>
+        </View>
+      </View>
+
+      <Text style={styles.subtitle}>Odměny za pravidelnost (XP)</Text>
+      <View style={styles.card}>
+        {renderReward('workout_1', 50, workoutCount >= 1, "První krok (1 trénink)")}
+        {renderReward('workout_10', 200, workoutCount >= 10, "Železná vůle (10 tréninků)")}
+        {renderReward('workout_50', 1000, workoutCount >= 50, "Gym Rat (50 tréninků)")}
+      </View>
+
+      <Text style={styles.subtitle}>PR Výzvy (XP)</Text>
+      <View style={styles.card}>
+        {renderReward('pr_bench_100', 300, prs.bench >= 100, "Klubovka 100 na bench")}
+        {renderReward('pr_squat_100', 300, prs.squat >= 100, "Dřep se 100!")}
+        {renderReward('pr_deadlift_150', 500, prs.deadlift >= 150, "Silák v tahu (150 kg)")}
+      </View>
+      <View style={{ height: 40 }} />
+    </ScrollView>
+  );
+}
+
+function GalleryScreen() {
+  const [photos, setPhotos] = useState([]);
+  const [category, setCategory] = useState("Vše");
+  const categories = ["Vše", "Záda/Prsa", "Ruce", "Nohy", "Břicho", "Celé tělo"];
+
+  useEffect(() => {
+    const loadPhotos = async () => {
+      try {
+        const stored = await AsyncStorage.getItem('@progress_photos');
+        if (stored) {
+          setPhotos(JSON.parse(stored));
+        }
+      } catch (e) {
+        console.log("Failed to load photos", e);
+      }
+    };
+    loadPhotos();
+  }, []);
+
+  const pickImage = async () => {
+    try {
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (permissionResult.granted === false) {
+        Alert.alert("Oprávnění", "Přístup k fotografiím je vyžadován.");
+        return;
+      }
+
+      let result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: false,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const uri = result.assets[0].uri;
+        const fileExt = uri.split('.').pop();
+        const fileName = `progress_${Date.now()}.${fileExt || 'jpg'}`;
+        const newPath = FileSystem.documentDirectory + fileName;
+
+        await FileSystem.copyAsync({
+          from: uri,
+          to: newPath
+        });
+
+        const newPhoto = {
+          id: Date.now().toString(),
+          uri: newPath,
+          date: new Date().toLocaleDateString('cs-CZ'),
+          category: category === "Vše" ? "Celé tělo" : category
+        };
+        const updatedPhotos = [newPhoto, ...photos];
+        setPhotos(updatedPhotos);
+        await AsyncStorage.setItem('@progress_photos', JSON.stringify(updatedPhotos));
+      }
+    } catch (e) {
+      Alert.alert("Nepodařilo se nahrát fotku", "Chyba: " + e.message);
+    }
+  };
+
+  const deletePhoto = async (id) => {
+    Alert.alert("Smazat", "Opravdu chceš smazat tuto fotku?", [
+      { text: "Ne", style: "cancel" },
+      {
+        text: "Ano", style: "destructive", onPress: async () => {
+          const updatedPhotos = photos.filter(p => p.id !== id);
+          setPhotos(updatedPhotos);
+          await AsyncStorage.setItem('@progress_photos', JSON.stringify(updatedPhotos));
+        }
+      }
+    ]);
+  };
+
+  const displayedPhotos = category === "Vše" ? photos : photos.filter(p => p.category === category);
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>📷 Galerie pokroku</Text>
+
+      <View style={{ flexDirection: 'row', justifyContent: 'center', flexWrap: 'wrap', marginBottom: 15 }}>
+        {categories.map(c => (
+          <TouchableOpacity
+            key={c}
+            onPress={() => setCategory(c)}
+            style={[styles.goalTypeBtn, category === c && styles.goalTypeBtnActive, { margin: 4 }]}
+          >
+            <Text style={[styles.goalTypeBtnText, category === c && { color: '#fff' }]}>{c}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <TouchableOpacity style={styles.primaryButton} onPress={pickImage}>
+        <Text style={styles.primaryButtonText}>+ Nahrát pro "{category === 'Vše' ? 'Celé tělo' : category}"</Text>
+      </TouchableOpacity>
+
+      <FlatList
+        data={displayedPhotos}
+        keyExtractor={item => item.id}
+        numColumns={2}
+        contentContainerStyle={{ marginTop: 20, paddingBottom: 40 }}
+        renderItem={({ item }) => (
+          <View style={{ flex: 1, margin: 5, backgroundColor: '#fff', borderRadius: 12, overflow: 'hidden', padding: 8, alignItems: 'center' }}>
+            <Image source={{ uri: item.uri }} style={{ width: '100%', aspectRatio: 3 / 4, borderRadius: 8 }} resizeMode="cover" />
+            <Text style={{ marginTop: 8, fontWeight: 'bold' }}>{item.date}</Text>
+            <Text style={{ fontSize: 12, color: '#666', marginTop: 2 }}>{item.category || "Celé tělo"}</Text>
+            <TouchableOpacity onPress={() => deletePhoto(item.id)} style={{ paddingVertical: 4 }}>
+              <Text style={{ color: 'red' }}>Smazat</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        ListEmptyComponent={<Text style={{ textAlign: 'center', marginTop: 20, color: '#666' }}>Tady zatím žádné fotky nejsou.</Text>}
+      />
     </View>
   );
 }
@@ -528,29 +753,81 @@ function ProfileScreen() {
   const [goalType, setGoalType] = useState('Síla');
   const [goalText, setGoalText] = useState('');
   const [saved, setSaved] = useState(false);
+  const [goals, setGoals] = useState([]);
+  const [activeSupps, setActiveSupps] = useState([]);
+
+  const SUPPLEMENTS_DB = [
+    { id: 'creatine', name: 'Kreatin', boost: 5, icon: '⚡' },
+    { id: 'preworkout', name: 'Pre-workout', boost: 3, icon: '🔥' },
+    { id: 'protein', name: 'Protein', boost: 2, icon: '🥤' },
+    { id: 'straps', name: 'Trhačky/Pásek', boost: 2, icon: '🏋️' },
+    { id: 'vitamins', name: 'Vitamíny', boost: 1, icon: '💊' }
+  ];
 
   useEffect(() => {
-    AsyncStorage.getItem('@personal_goal').then(str => {
-      if (str) {
-        try {
-          const parsed = JSON.parse(str);
-          setGoalType(parsed.type || 'Síla');
-          setGoalText(parsed.text || '');
-        } catch (e) { }
-      }
-    });
+    const loadGoals = async () => {
+      try {
+        const strGoals = await AsyncStorage.getItem('@personal_goals_list');
+        if (strGoals) {
+          setGoals(JSON.parse(strGoals));
+        } else {
+          // Zpětná kompatibilita se starým uložením
+          const oldGoalStr = await AsyncStorage.getItem('@personal_goal');
+          if (oldGoalStr) {
+            const oldGoal = JSON.parse(oldGoalStr);
+            setGoals([{ id: Date.now().toString(), type: oldGoal.type || 'Síla', text: oldGoal.text || '' }]);
+          }
+        }
+      } catch (e) { }
+    };
+
+    const loadSupps = async () => {
+      try {
+        const str = await AsyncStorage.getItem('@active_supps');
+        if (str) setActiveSupps(JSON.parse(str));
+      } catch (e) { }
+    };
+
+    loadGoals();
+    loadSupps();
   }, []);
 
+  const toggleSupp = async (id) => {
+    let newSupps = [...activeSupps];
+    if (newSupps.includes(id)) {
+      newSupps = newSupps.filter(x => x !== id);
+    } else {
+      newSupps.push(id);
+    }
+    setActiveSupps(newSupps);
+    await AsyncStorage.setItem('@active_supps', JSON.stringify(newSupps));
+  };
+
   const saveGoal = async () => {
-    await AsyncStorage.setItem('@personal_goal', JSON.stringify({ type: goalType, text: goalText }));
+    Keyboard.dismiss();
+    if (!goalText.trim()) return;
+
+    const newGoal = { id: Date.now().toString(), type: goalType, text: goalText };
+    const newGoals = [newGoal, ...goals];
+
+    await AsyncStorage.setItem('@personal_goals_list', JSON.stringify(newGoals));
+    setGoals(newGoals);
+
+    setGoalText('');
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  };
+
+  const deleteGoal = async (id) => {
+    const newGoals = goals.filter(g => g.id !== id);
+    await AsyncStorage.setItem('@personal_goals_list', JSON.stringify(newGoals));
+    setGoals(newGoals);
   };
 
   const types = ['Síla', 'Váha', 'Osobní'];
 
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
       <Text style={styles.title}>🎯 Osobní Cíle</Text>
 
       <View style={styles.card}>
@@ -578,7 +855,167 @@ function ProfileScreen() {
           <Text style={styles.primaryButtonText}>{saved ? "Uloženo ✔️" : "Uložit cíl"}</Text>
         </TouchableOpacity>
       </View>
-    </View>
+
+      <Text style={styles.subtitle}>Moje cíle</Text>
+      {goals.length === 0 && (
+        <Text style={{ color: '#666', textAlign: 'center', marginTop: 10 }}>Zatím nemáš žádné cíle.</Text>
+      )}
+      {goals.map(g => (
+        <View key={g.id} style={[styles.card, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
+          <View style={{ flex: 1, paddingRight: 10 }}>
+            <Text style={{ fontWeight: 'bold', color: '#2d6cdf', marginBottom: 4 }}>{g.type}</Text>
+            <Text>{g.text}</Text>
+          </View>
+          <TouchableOpacity onPress={() => deleteGoal(g.id)} style={{ padding: 10 }}>
+            <Text style={{ color: 'red', fontWeight: 'bold', fontSize: 18 }}>✕</Text>
+          </TouchableOpacity>
+        </View>
+      ))}
+      <Text style={styles.subtitle}>💊 Aktivní Doplňky (XP Boost)</Text>
+      <View style={styles.card}>
+        <Text style={{ color: '#666', marginBottom: 10 }}>
+          Vyber si doplňky, které používáš pro svůj trénink. Zvýší ti to celkové XP získané po uložení tréninku!
+        </Text>
+        {SUPPLEMENTS_DB.map(s => {
+          const isActive = activeSupps.includes(s.id);
+          return (
+            <TouchableOpacity
+              key={s.id}
+              onPress={() => toggleSupp(s.id)}
+              style={{
+                flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+                padding: 12, backgroundColor: isActive ? '#e3f2fd' : '#f9f9fc',
+                borderWidth: 1, borderColor: isActive ? '#2d6cdf' : '#eee', borderRadius: 8, marginBottom: 8
+              }}
+            >
+              <Text style={{ fontSize: 16, fontWeight: isActive ? 'bold' : 'normal', color: isActive ? '#2d6cdf' : '#333' }}>
+                {s.icon} {s.name}
+              </Text>
+              <Text style={{ color: isActive ? '#2d6cdf' : '#888', fontWeight: 'bold' }}>
+                +{s.boost} %
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      <View style={{ height: 40 }} />
+    </ScrollView>
+  );
+}
+
+function WeightScreen() {
+  const [weights, setWeights] = useState([]);
+  const [newWeight, setNewWeight] = useState("");
+
+  useEffect(() => {
+    const loadWeights = async () => {
+      try {
+        const stored = await AsyncStorage.getItem('@weight_history');
+        if (stored) {
+          setWeights(JSON.parse(stored));
+        }
+      } catch (e) { }
+    };
+    loadWeights();
+  }, []);
+
+  const addWeight = async () => {
+    if (!newWeight || isNaN(newWeight.replace(',', '.'))) {
+      Alert.alert("Chyba", "Zadejte platnou váhu.");
+      return;
+    }
+    const cleanWeight = Number(newWeight.replace(',', '.'));
+    const dt = new Date().toLocaleDateString('cs-CZ');
+    let updated = [...weights];
+
+    // Check if there is already a weight for today
+    const index = updated.findIndex(w => w.date === dt);
+    if (index >= 0) {
+      updated[index].weight = cleanWeight;
+    } else {
+      updated.push({ date: dt, weight: cleanWeight });
+    }
+
+    setWeights(updated);
+    await AsyncStorage.setItem('@weight_history', JSON.stringify(updated));
+    setNewWeight("");
+    Keyboard.dismiss();
+  };
+
+  const chartData = {
+    labels: weights.length > 0 ? weights.slice(-7).map(w => w.date.substring(0, 5)) : ["0"],
+    datasets: [
+      {
+        data: weights.length > 0 ? weights.slice(-7).map(w => w.weight) : [0]
+      }
+    ]
+  };
+
+  return (
+    <ScrollView style={styles.container}>
+      <Text style={styles.title}>⚖️ Sledování Váhy</Text>
+
+      <View style={styles.card}>
+        <Text style={{ fontWeight: 'bold', marginBottom: 10, fontSize: 16 }}>Dnešní váha (kg):</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TextInput
+            style={[styles.input, { flex: 1, marginBottom: 0 }]}
+            placeholder="Nová váha (např. 80.5)"
+            keyboardType="numeric"
+            value={newWeight}
+            onChangeText={setNewWeight}
+          />
+          <TouchableOpacity style={[styles.primaryButton, { marginTop: 0, marginLeft: 10, padding: 14 }]} onPress={addWeight}>
+            <Text style={styles.primaryButtonText}>Uložit</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <Text style={styles.subtitle}>Historie ({weights.length})</Text>
+
+      {weights.length > 0 ? (
+        <View style={{ alignItems: 'center', backgroundColor: '#fff', borderRadius: 12, paddingVertical: 10, marginBottom: 20 }}>
+          <LineChart
+            data={chartData}
+            width={Dimensions.get("window").width - 50}
+            height={220}
+            yAxisSuffix=" kg"
+            chartConfig={{
+              backgroundColor: "#ffffff",
+              backgroundGradientFrom: "#ffffff",
+              backgroundGradientTo: "#ffffff",
+              decimalPlaces: 1,
+              color: (opacity = 1) => `rgba(45, 108, 223, ${opacity})`,
+              labelColor: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
+              style: {
+                borderRadius: 16
+              },
+              propsForDots: {
+                r: "5",
+                strokeWidth: "2",
+                stroke: "#1a4dad"
+              }
+            }}
+            bezier
+            style={{
+              marginVertical: 8,
+              borderRadius: 16
+            }}
+          />
+        </View>
+      ) : (
+        <Text style={{ color: '#666', marginTop: 10, marginBottom: 20 }}>Přidejte první záznam pro zobrazení grafu.</Text>
+      )}
+
+      {weights.slice().reverse().map((w, index) => (
+        <View key={index} style={[styles.card, { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }]}>
+          <Text style={{ fontSize: 16 }}>{w.date}</Text>
+          <Text style={{ fontSize: 16, fontWeight: 'bold' }}>{w.weight} kg</Text>
+        </View>
+      ))}
+      <View style={{ height: 40 }} />
+    </ScrollView>
   );
 }
 
@@ -616,8 +1053,26 @@ export default function App() {
   const handleFinishWorkout = async (payload) => {
     if (!user) return;
     try {
+      let boostPercentage = 0;
+      try {
+        const storedSupps = await AsyncStorage.getItem('@active_supps');
+        if (storedSupps) {
+          const activeIds = JSON.parse(storedSupps);
+          const SUPPLEMENTS_DB = [
+            { id: 'creatine', boost: 5 }, { id: 'preworkout', boost: 3 },
+            { id: 'protein', boost: 2 }, { id: 'straps', boost: 2 }, { id: 'vitamins', boost: 1 }
+          ];
+          activeIds.forEach(id => {
+            const s = SUPPLEMENTS_DB.find(x => x.id === id);
+            if (s) boostPercentage += s.boost;
+          });
+        }
+      } catch (e) { }
+
+      const finalPayload = { ...payload, boostPercentage };
+
       // Optimistic UI update or wait? Let's wait.
-      const res = await addWorkout(user.id, payload, user.token);
+      const res = await addWorkout(user.id, finalPayload, user.token);
       if (res) {
         // Reload history
         const list = await fetchWorkouts(user.id, user.token);
@@ -669,8 +1124,12 @@ export default function App() {
             <Tab.Screen name="Progress">
               {() => <ProgressScreen workouts={workouts} />}
             </Tab.Screen>
-            <Tab.Screen name="Ocenění" component={AchievementsScreen} />
+            <Tab.Screen name="Ocenění">
+              {() => <AchievementsScreen workouts={workouts} user={user} onUpdateUser={newStats => setUser(u => ({ ...u, ...newStats }))} />}
+            </Tab.Screen>
             <Tab.Screen name="Cíle" component={ProfileScreen} />
+            <Tab.Screen name="Váha" component={WeightScreen} />
+            <Tab.Screen name="Galerie" component={GalleryScreen} />
           </Tab.Navigator>
         </NavigationContainer>
       </SafeAreaProvider>

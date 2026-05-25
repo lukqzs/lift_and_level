@@ -79,6 +79,20 @@ export async function addWorkout(userId, workout, token) {
   return data;
 }
 
+export async function addXp(userId, xp, token) {
+  const payload = { xp };
+  const data = await request(`/users/${userId}/add-xp`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  return data;
+}
+
+export async function fetchRandomQuote() {
+  return await request("/quotes/random");
+}
+
 const EXERCISE_CATALOG = [
   // Hrudník (Chest)
   { id: 1, name: "Bench Press", muscles: ["chest", "triceps", "deltoids"] },
