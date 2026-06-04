@@ -18,6 +18,9 @@ const getBaseUrl = () => {
 
 const baseUrl = getBaseUrl();
 
+// --- BACKEND COMMUNICATION FUNCTIONS ---
+// This file contains all functions used by the application to send and retrieve data.
+
 async function request(path, options = {}) {
   try {
     const response = await fetch(`${baseUrl}${path}`, {
@@ -43,6 +46,8 @@ async function request(path, options = {}) {
   }
 }
 
+// --- FUNKCE PRO PŘIHLÁŠENÍ A REGISTRACI ---
+
 export async function login(email, password) {
   const payload = { email, password };
   const data = await request("/auth/login", {
@@ -60,6 +65,17 @@ export async function register(name, email, password) {
   });
   return data;
 }
+
+export async function authGoogle(email, name, uid) {
+  const payload = { email, name, uid };
+  const data = await request("/auth/google", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return data;
+}
+
+// --- FUNKCE PRO TRÉNINKY A UŽIVATELE ---
 
 export async function fetchWorkouts(userId, token) {
   const data = await request(`/users/${userId}/workouts`, {

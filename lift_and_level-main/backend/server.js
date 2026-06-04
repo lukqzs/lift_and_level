@@ -90,6 +90,8 @@ app.post("/auth/login", async (req, res) => {
   }
 });
 
+// --- API ENDPOINTY PRO PŘIHLÁŠENÍ A REGISTRACI ---
+
 app.post("/auth/register", async (req, res) => {
   const { name, email, password } = req.body || {};
   if (!name || !email || !password) {
@@ -129,13 +131,50 @@ app.post("/auth/register", async (req, res) => {
   }
 });
 
+app.post("/auth/google", async (req, res) => {
+  const { email, name, uid } = req.body || {};
+  if (!email || !uid) return res.status(400).json({ message: "Missing Google auth data" });
+
+  try {
+    const existing = await query("SELECT * FROM users_v2 WHERE email = ? LIMIT 1", [email]);
+    let user;
+
+    if (existing.length) {
+      user = existing[0];
+    } else {
+      const result = await query(
+        "INSERT INTO users_v2 (name, email, password_hash, xp, level, rank) VALUES (?, ?, ?, 0, 1, 'Začátečník')",
+        [name || 'Google Uživatel', email, 'google_sso_' + uid]
+      );
+      user = { id: result.insertId, name: name || 'Google Uživatel', email, xp: 0, level: 1, rank: 'Začátečník' };
+    }
+
+    const token = jwt.sign({ sub: user.id }, JWT_SECRET, { expiresIn: "7d" });
+
+    res.json({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      xp: user.xp,
+      level: user.level,
+      rank: user.rank,
+      token,
+    });
+  } catch (error) {
+    console.error("/auth/google error", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// --- API ENDPOINTY PRO TRÉNINKY (ZÍSKÁNÍ A ULOŽENÍ) ---
+
 app.get("/users/:id/workouts", auth, async (req, res) => {
   const { id } = req.params;
   if (Number(id) !== Number(req.userId)) return res.status(403).json({ message: "Forbidden" });
 
   try {
     const workouts = await query(
-      "SELECT id, workout_date, duration, total_xp FROM workouts_v2 WHERE user_id = ? ORDER BY workout_date DESC",
+      "SELECT id, DATE_FORMAT(workout_date, '%Y-%m-%d') as workout_date, duration, total_xp FROM workouts_v2 WHERE user_id = ? ORDER BY workout_date DESC",
       [id]
     );
 
@@ -155,7 +194,7 @@ app.get("/users/:id/workouts", auth, async (req, res) => {
       workouts.forEach(w => {
         workoutsMap[w.id] = {
           id: w.id,
-          date: new Date(w.workout_date).toISOString().slice(0, 10),
+          date: w.workout_date,
           duration: w.duration,
           xp: w.total_xp,
           items: []
@@ -331,6 +370,8 @@ app.get("/quotes/random", async (req, res) => {
     res.json(fallback);
   }
 });
+
+// --- API ENDPOINTY PRO ZÍSKÁNÍ XP A POSTUP (LEVELY) ---
 
 app.post("/users/:id/add-xp", auth, async (req, res) => {
   const { id } = req.params;

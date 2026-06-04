@@ -1,4 +1,6 @@
+import { KeyboardAvoidingView, Platform, useColorScheme } from "react-native";
 import React, { useEffect, useMemo, useState, useRef } from "react";
+import { useWindowDimensions } from "react-native";
 import {
   StyleSheet,
   Text,
@@ -24,22 +26,52 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { enableScreens } from "react-native-screens";
+
+import auth from '@react-native-firebase/auth';
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { LineChart } from "react-native-chart-kit";
 import Body from "react-native-body-highlighter";
 
-import { addWorkout, fetchWorkouts, login, register, searchExercises, fetchRandomQuote, addXp } from "./services/api";
+import { addWorkout, fetchWorkouts, login, register, authGoogle, searchExercises, fetchRandomQuote, addXp } from "./services/api";
+
+GoogleSignin.configure({
+  webClientId: '380610611330-pi56opsa4eoau8eimput3g888v1akvqo.apps.googleusercontent.com',
+});
 
 enableScreens();
 
 const Tab = createBottomTabNavigator();
 
-// --- Auth Screen ---
+// --- OBRAZOVKA PŘIHLÁŠENÍ ---
+// Zde probíhá přihlašování, registrace a ověření přes Google
 function LoginScreen({ onAuth, busy }) {
+  const theme = useColorScheme();
+  const { width } = useWindowDimensions();
+  const styles = useMemo(() => getStyles(theme, width), [theme, width]);
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [mode, setMode] = useState("login");
   const [error, setError] = useState("");
+
+  const handleGoogleLogin = async () => {
+    try {
+      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+      const signInResult = await GoogleSignin.signIn();
+
+      let idToken = signInResult.idToken || signInResult.data?.idToken;
+      if (!idToken) throw new Error('No ID token found');
+
+      const googleCredential = auth.GoogleAuthProvider.credential(idToken);
+      const userCredential = await auth().signInWithCredential(googleCredential);
+
+      await onAuth({ mode: 'google', idToken: idToken, user: userCredential.user });
+    } catch (error) {
+      console.error(error);
+      Alert.alert('Chyba přihlášení přes Google', error.message);
+    }
+  };
 
   const handleSubmit = async () => {
     setError("");
@@ -55,61 +87,81 @@ function LoginScreen({ onAuth, busy }) {
   };
 
   return (
-    <View style={styles.containerCenter}>
-      <Text style={styles.title}>
-        {mode === "login" ? "LiftAndLevel Přihlášení" : "Registrace"}
-      </Text>
-      {mode === "register" && (
-        <TextInput
-          placeholder="Jméno"
-          style={styles.input}
-          autoCapitalize="words"
-          value={name}
-          onChangeText={setName}
-        />
-      )}
-      <TextInput
-        placeholder="E-mail"
-        style={styles.input}
-        autoCapitalize="none"
-        keyboardType="email-address"
-        value={email}
-        onChangeText={setEmail}
-      />
-      <TextInput
-        placeholder="Heslo"
-        style={styles.input}
-        secureTextEntry
-        value={password}
-        onChangeText={setPassword}
-      />
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-      <TouchableOpacity style={styles.primaryButton} onPress={handleSubmit} disabled={busy}>
-        {busy ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.primaryButtonText}>
-            {mode === "login" ? "Přihlásit" : "Registrovat"}
-          </Text>
-        )}
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={styles.linkButton}
-        onPress={() => setMode(mode === "login" ? "register" : "login")}
-        disabled={busy}
-      >
-        <Text style={styles.linkButtonText}>
-          {mode === "login" ? "Nemáš účet? Registruj se" : "Máš účet? Přihlas se"}
+    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
+      <View style={styles.containerCenter}>
+        <Text style={styles.title}>
+          {mode === "login" ? "LiftAndLevel Přihlášení" : "Registrace"}
         </Text>
-      </TouchableOpacity>
-      <StatusBar style="auto" />
-    </View>
+        {mode === "register" && (
+          <TextInput
+            placeholder="Jméno"
+            style={styles.input}
+            autoCapitalize="words"
+            value={name}
+            onChangeText={setName}
+          />
+        )}
+        <TextInput
+          placeholder="E-mail"
+          style={styles.input}
+          autoCapitalize="none"
+          keyboardType="email-address"
+          value={email}
+          onChangeText={setEmail}
+        />
+        <TextInput
+          placeholder="Heslo"
+          style={styles.input}
+          secureTextEntry
+          value={password}
+          onChangeText={setPassword}
+        />
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+        <TouchableOpacity style={styles.primaryButton} onPress={handleSubmit} disabled={busy}>
+          {busy ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.primaryButtonText}>
+              {mode === "login" ? "Přihlásit" : "Registrovat"}
+            </Text>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.linkButton}
+          onPress={() => setMode(mode === "login" ? "register" : "login")}
+          disabled={busy}
+        >
+          <Text style={styles.linkButtonText}>
+            {mode === "login" ? "Nemáš účet? Registruj se" : "Máš účet? Přihlas se"}
+          </Text>
+        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 30, marginBottom: 20 }}>
+          <View style={{ flex: 1, height: 1, backgroundColor: '#ddd' }} />
+          <Text style={{ marginHorizontal: 10, color: '#888' }}>nebo</Text>
+          <View style={{ flex: 1, height: 1, backgroundColor: '#ddd' }} />
+        </View>
+
+        <TouchableOpacity
+          style={[styles.primaryButton, { backgroundColor: '#DB4437', marginTop: 0 }]}
+          onPress={handleGoogleLogin}
+          disabled={busy}
+        >
+          <Text style={styles.primaryButtonText}>Přihlásit se přes Google</Text>
+        </TouchableOpacity>
+
+        <StatusBar style="auto" />
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 
 
 function Timer({ startTime }) {
+  const theme = useColorScheme();
+  const { width } = useWindowDimensions();
+  const styles = useMemo(() => getStyles(theme, width), [theme, width]);
+
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -129,6 +181,10 @@ function Timer({ startTime }) {
 }
 
 function ExercisePicker({ visible, onClose, onSelect }) {
+  const theme = useColorScheme();
+  const { width } = useWindowDimensions();
+  const styles = useMemo(() => getStyles(theme, width), [theme, width]);
+
   const [query, setQuery] = useState("");
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -182,11 +238,17 @@ function ExercisePicker({ visible, onClose, onSelect }) {
   );
 }
 
-// --- Screens ---
+// --- HLAVNÍ OBRAZOVKY APLIKACE ---
 
-// --- Motivation Quotes Setup ---
-function HomeScreen({ user, onLogout }) {
+// --- DOMOVSKÁ OBRAZOVKA ---
+// Zobrazuje úroveň uživatele, XP bar a denní/týdenní výzvy
+function HomeScreen({ user, workouts, onLogout, onUpdateUser }) {
+  const theme = useColorScheme();
+  const styles = useMemo(() => getStyles(theme), [theme]);
+
   const [motivationalQuote, setMotivationalQuote] = useState("Načítám motivaci...");
+  const [claimedChallenges, setClaimedChallenges] = useState({ daily: null, weekly: null });
+  const [claiming, setClaiming] = useState(false);
 
   useEffect(() => {
     fetchRandomQuote()
@@ -198,9 +260,12 @@ function HomeScreen({ user, onLogout }) {
         }
       })
       .catch(() => setMotivationalQuote("Zvedni víc než včera!"));
+
+    AsyncStorage.getItem('@claimed_challenges').then(res => {
+      if (res) setClaimedChallenges(JSON.parse(res));
+    });
   }, []);
 
-  // Helpers
   const getLevelProgress = (xp, level) => {
     const currentLevelBaseXp = 50 * Math.pow(level - 1, 2);
     const nextLevelBaseXp = 50 * Math.pow(level, 2);
@@ -218,8 +283,59 @@ function HomeScreen({ user, onLogout }) {
 
   const progress = getLevelProgress(user.xp, user.level);
 
+  // Challenges Logic
+  // Challenges Logic
+  const todayDate = getLocalDate();
+
+  const dailyVolume = (workouts || []).filter(w => w.date === todayDate).reduce((acc, w) => {
+    const vol = (w.items || []).reduce((sum, item) => sum + (item.sets * item.reps * item.weight), 0);
+    return acc + vol;
+  }, 0);
+
+  const isDailyComplete = dailyVolume >= 1000;
+  const isDailyClaimed = claimedChallenges.daily === todayDate;
+
+  const getWeekId = () => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+    return `${d.getUTCFullYear()}-W${weekNo}`;
+  };
+  const weekId = getWeekId();
+
+  const currentWeekWorkouts = (workouts || []).filter(w => {
+    const wd = new Date(w.date);
+    const diff = (new Date() - wd) / (1000 * 60 * 60 * 24);
+    return diff <= 7;
+  }).length;
+
+  const isWeeklyComplete = currentWeekWorkouts >= 3;
+  const isWeeklyClaimed = claimedChallenges.weekly === weekId;
+
+  const claimChallenge = async (type, xp) => {
+    if (claiming) return;
+    setClaiming(true);
+    try {
+      const newStats = await addXp(user.id, xp, user.token);
+      onUpdateUser(newStats);
+
+      const newClaimed = { ...claimedChallenges };
+      if (type === 'daily') newClaimed.daily = todayDate;
+      if (type === 'weekly') newClaimed.weekly = weekId;
+
+      setClaimedChallenges(newClaimed);
+      await AsyncStorage.setItem('@claimed_challenges', JSON.stringify(newClaimed));
+      Alert.alert("Úspěch", `Gratulujeme! Získal(a) jsi ${xp} XP.`);
+    } catch (e) {
+      Alert.alert("Chyba", "Nepodařilo se připsat XP.");
+    } finally {
+      setClaiming(false);
+    }
+  };
+
   return (
-    <View style={styles.containerCenter}>
+    <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }}>
       <View style={styles.header}>
         <Text style={styles.greeting}>Vítej zpět,</Text>
         <Text style={styles.userName}>{user.name}</Text>
@@ -249,21 +365,57 @@ function HomeScreen({ user, onLogout }) {
         </Text>
       </View>
 
-      {/* Motivational Quote */}
+      <View style={styles.quoteCard}>
+        <Text style={styles.quoteLabel}>Výzvy na aktuální období</Text>
+
+        {/* Daily */}
+        <View style={{ marginTop: 10, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: '#eee' }}>
+          <Text style={{ fontWeight: 'bold', fontSize: 16 }}>Denní výzva: Objemový král</Text>
+          <Text style={{ color: '#666', marginBottom: 5 }}>Zvedni dnes celkem 1000 kg</Text>
+          <Text style={{ color: isDailyComplete ? 'green' : '#ff9800', fontWeight: 'bold' }}>Stav: {dailyVolume} / 1000 kg</Text>
+
+          {isDailyComplete && !isDailyClaimed && (
+            <TouchableOpacity onPress={() => claimChallenge('daily', 100)} style={{ backgroundColor: '#2d6cdf', padding: 8, borderRadius: 8, marginTop: 5, alignItems: 'center' }}>
+              <Text style={{ color: '#fff', fontWeight: 'bold' }}>Získat 100 XP</Text>
+            </TouchableOpacity>
+          )}
+          {isDailyClaimed && <Text style={{ color: 'green', fontWeight: 'bold', marginTop: 5 }}>✅ Vybráno</Text>}
+        </View>
+
+        {/* Weekly */}
+        <View style={{ marginTop: 10 }}>
+          <Text style={{ fontWeight: 'bold', fontSize: 16 }}>Týdenní výzva: Železná disciplína</Text>
+          <Text style={{ color: '#666', marginBottom: 5 }}>Odcvič 3 tréninky za posledních 7 dní</Text>
+          <Text style={{ color: isWeeklyComplete ? 'green' : '#ff9800', fontWeight: 'bold' }}>Stav: {currentWeekWorkouts} / 3 tréninky</Text>
+
+          {isWeeklyComplete && !isWeeklyClaimed && (
+            <TouchableOpacity onPress={() => claimChallenge('weekly', 500)} style={{ backgroundColor: '#2d6cdf', padding: 8, borderRadius: 8, marginTop: 5, alignItems: 'center' }}>
+              <Text style={{ color: '#fff', fontWeight: 'bold' }}>Získat 500 XP</Text>
+            </TouchableOpacity>
+          )}
+          {isWeeklyClaimed && <Text style={{ color: 'green', fontWeight: 'bold', marginTop: 5 }}>✅ Vybráno</Text>}
+        </View>
+      </View>
+
       <View style={styles.quoteCard}>
         <Text style={styles.quoteLabel}>Motivace pro dnešek</Text>
         <Text style={styles.motivationalQuote}>"{motivationalQuote}"</Text>
       </View>
 
-      <View style={{ flex: 1 }} />
+      <View style={{ height: 30 }} />
       <TouchableOpacity style={styles.logoutBtn} onPress={onLogout}>
         <Text style={styles.logoutText}>Odhlásit se</Text>
       </TouchableOpacity>
-    </View>
+      <View style={{ height: 40 }} />
+    </ScrollView>
   );
 }
 
+// --- OBRAZOVKA TRÉNINKU ---
+// Umožňuje uživateli zadávat odcvičené série, opáčka a váhy
 function WorkoutScreen({ workouts = [], onFinishWorkout }) {
+  const theme = useColorScheme();
+  const styles = useMemo(() => getStyles(theme), [theme]);
 
   const [isActive, setIsActive] = useState(false);
   const [startTime, setStartTime] = useState(null);
@@ -271,7 +423,6 @@ function WorkoutScreen({ workouts = [], onFinishWorkout }) {
 
   const [pickerVisible, setPickerVisible] = useState(false);
   const [currentExercise, setCurrentExercise] = useState(null);
-  const [sets, setSets] = useState("");
   const [reps, setReps] = useState("");
   const [weight, setWeight] = useState("");
 
@@ -296,7 +447,7 @@ function WorkoutScreen({ workouts = [], onFinishWorkout }) {
           onPress: () => {
             const durationSec = Math.floor((Date.now() - startTime) / 1000);
             onFinishWorkout({
-              date: new Date().toISOString().slice(0, 10),
+              date: getLocalDate(),
               duration: durationSec,
               items: sessionItems
             });
@@ -322,25 +473,27 @@ function WorkoutScreen({ workouts = [], onFinishWorkout }) {
   };
 
   const addSet = () => {
-    if (!currentExercise || !sets || !reps) return;
+    if (!currentExercise) {
+      Alert.alert("Chyba", "Nejdřív nahoře vyber cvik přes tlačítko 'Vybrat cvik'.");
+      return;
+    }
+    if (!reps || reps.trim() === "") {
+      Alert.alert("Chyba", "Musíš vyplnit počet opakování!");
+      return;
+    }
     const newItem = {
-      id: Date.now(), // temp id
+      id: Date.now() + Math.random(),
       name: currentExercise.name,
-      sets: Number(sets),
+      sets: 1,
       reps: Number(reps),
       weight: Number(weight) || 0
     };
-    setSessionItems(prev => [newItem, ...prev]);
-
-    setSets("");
-    setReps("");
-
+    setSessionItems(prev => [...prev, newItem]);
   };
 
   if (isActive) {
     return (
       <View style={styles.container}>
-        {/* Timer Header */}
         <View style={styles.activeHeader}>
           <View>
             <Text style={styles.activeLabel}>Čas tréninku</Text>
@@ -350,7 +503,6 @@ function WorkoutScreen({ workouts = [], onFinishWorkout }) {
         </View>
 
         <ScrollView style={styles.sessionScroll} contentContainerStyle={{ paddingBottom: 100 }}>
-          {/* Add Form */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Nový záznam</Text>
 
@@ -370,32 +522,27 @@ function WorkoutScreen({ workouts = [], onFinishWorkout }) {
               </TouchableOpacity>
             )}
 
-            <View style={styles.row}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 10 }}>
               <TextInput
-                placeholder="Série"
+                placeholder="Opakování"
                 keyboardType="numeric"
-                style={styles.inputSmall}
-                value={sets} onChangeText={setSets}
-              />
-              <TextInput
-                placeholder="Opak."
-                keyboardType="numeric"
-                style={styles.inputSmall}
+                style={[styles.inputSmall, { flex: 1, marginRight: 10 }]}
                 value={reps} onChangeText={setReps}
               />
               <TextInput
                 placeholder="Váha (kg)"
                 keyboardType="numeric"
-                style={styles.inputSmall}
+                style={[styles.inputSmall, { flex: 1, marginRight: 10 }]}
                 value={weight} onChangeText={setWeight}
               />
+              <TouchableOpacity onPress={addSet} style={{ backgroundColor: '#2d6cdf', padding: 12, borderRadius: 8, width: 50, alignItems: 'center' }}>
+                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 20 }}>+</Text>
+              </TouchableOpacity>
             </View>
-
-            <Button title="Přidat sérii" onPress={addSet} disabled={!currentExercise || !sets || !reps} />
+            <Text style={{ color: '#888', fontSize: 12, textAlign: 'center', marginBottom: 10 }}>Vyplň hodnoty a pro každou sérii klikni na +</Text>
           </View>
 
-          {/* List */}
-          <Text style={styles.subtitle}>Právě odcvičeno ({sessionItems.length})</Text>
+          <Text style={styles.subtitle}>Právě odcvičeno ({sessionItems.length} sérií)</Text>
           {sessionItems.map((item) => (
             <View key={item.id} style={styles.miniCard}>
               <Text style={{ fontWeight: 'bold' }}>{item.name}</Text>
@@ -413,7 +560,6 @@ function WorkoutScreen({ workouts = [], onFinishWorkout }) {
     );
   }
 
-  // IDLE MODE -> History & Start
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Váš Trénink</Text>
@@ -435,9 +581,9 @@ function WorkoutScreen({ workouts = [], onFinishWorkout }) {
               {Math.floor((item.duration || 0) / 60)} min {(item.duration || 0) % 60} s
             </Text>
             {item.items && item.items.map(ex => (
-              <View key={ex.id} style={{ marginTop: 4, paddingLeft: 8, borderLeftWidth: 2, borderLeftColor: '#eee' }}>
+              <View key={ex.id || Math.random()} style={{ marginTop: 4, paddingLeft: 8, borderLeftWidth: 2, borderLeftColor: '#eee' }}>
                 <Text style={{ fontWeight: '600' }}>{ex.name}</Text>
-                <Text style={{ color: '#666', fontSize: 13 }}>{ex.sets} x {ex.reps} @ {ex.weight}kg</Text>
+                <Text>{ex.sets}x {ex.reps} @ {ex.weight}kg</Text>
               </View>
             ))}
           </View>
@@ -447,11 +593,12 @@ function WorkoutScreen({ workouts = [], onFinishWorkout }) {
   );
 }
 
-
-// --- Additional Screens ---
-
-// --- Progress / Figure Visualization ---
+// --- KALENDÁŘ A POSTUP ---
+// Zobrazuje historii cvičení v kalendáři podle intenzity
 function ProgressScreen({ workouts }) {
+  const theme = useColorScheme();
+  const styles = useMemo(() => getStyles(theme), [theme]);
+
   const [exercisesData, setExercisesData] = useState([]);
 
   useEffect(() => {
@@ -531,26 +678,44 @@ function getPRRank(weight) {
   return "Nováček";
 }
 
+const WORKOUT_MILESTONES = [1, 5, 10, 20, 30, 50, 75, 100, 150, 200, 300, 500];
+const BENCH_MILESTONES = [50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200];
+const SQUAT_MILESTONES = [60, 80, 100, 120, 140, 160, 180, 200, 220, 240, 260, 280, 300];
+const DEADLIFT_MILESTONES = [80, 100, 120, 140, 160, 180, 200, 220, 250, 280, 300, 320, 350];
+
+// --- OBRAZOVKA OCENĚNÍ A VÝZEV (PR) ---
+// Ukazuje dosažené levely, pravidelnost a osobní rekordy, které uživatelé odemykají plněním cílů.
 function AchievementsScreen({ workouts, user, onUpdateUser }) {
-  const [claimedRewards, setClaimedRewards] = useState({});
+  const theme = useColorScheme();
+  const styles = useMemo(() => getStyles(theme), [theme]);
+
+  const [claimedRewards, setClaimedRewards] = useState({
+    workout_tier: 0,
+    bench_tier: 0,
+    squat_tier: 0,
+    deadlift_tier: 0
+  });
   const [claiming, setClaiming] = useState(false);
 
   useEffect(() => {
-    AsyncStorage.getItem('@claimed_rewards').then(res => {
-      if (res) setClaimedRewards(JSON.parse(res));
+    AsyncStorage.getItem('@claimed_rewards_v2').then(res => {
+      if (res) {
+        setClaimedRewards(JSON.parse(res));
+      }
     });
   }, []);
 
-  const claim = async (id, xpAmount) => {
-    if (claiming || claimedRewards[id]) return;
+  const claimTier = async (category, xpAmount) => {
+    if (claiming) return;
     setClaiming(true);
     try {
       const newStats = await addXp(user.id, xpAmount, user.token);
       onUpdateUser(newStats);
 
-      const newClaimed = { ...claimedRewards, [id]: true };
+      const currentTier = claimedRewards[category] || 0;
+      const newClaimed = { ...claimedRewards, [category]: currentTier + 1 };
       setClaimedRewards(newClaimed);
-      await AsyncStorage.setItem('@claimed_rewards', JSON.stringify(newClaimed));
+      await AsyncStorage.setItem('@claimed_rewards_v2', JSON.stringify(newClaimed));
       Alert.alert("Úspěch", `Gratulujeme! Získal(a) jsi ${xpAmount} XP.`);
     } catch (e) {
       Alert.alert("Chyba", "Nepodařilo se připsat XP.");
@@ -559,20 +724,35 @@ function AchievementsScreen({ workouts, user, onUpdateUser }) {
     }
   };
 
-  const renderReward = (id, xp, condition, title) => {
-    const isUnlocked = condition;
-    const isClaimed = claimedRewards[id];
+  const renderDynamicReward = (category, milestones, currentValue, titlePrefix) => {
+    const currentTier = claimedRewards[category] || 0;
+
+    if (currentTier >= milestones.length) {
+      return (
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <Text style={{ fontSize: 16, flex: 1, paddingRight: 10 }}>✅ {titlePrefix} - VŠE SPLNĚNO!</Text>
+          <Text style={{ color: '#2d6cdf', fontWeight: 'bold' }}>MAX Level</Text>
+        </View>
+      );
+    }
+
+    const target = milestones[currentTier];
+    const isUnlocked = currentValue >= target;
+    const xp = category === 'workout_tier' ? target * 20 : target * 3;
+    const title = category === 'workout_tier'
+      ? `Pravidelnost (${target} tréninků)`
+      : `${titlePrefix} (${target} kg)`;
+
     return (
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <Text style={{ fontSize: 16, flex: 1, paddingRight: 10 }}>
           {isUnlocked ? "✅" : "❌"} {title}
         </Text>
-        {isUnlocked && !isClaimed && (
-          <TouchableOpacity onPress={() => claim(id, xp)} style={{ backgroundColor: '#ff9800', padding: 8, borderRadius: 8 }}>
+        {isUnlocked && (
+          <TouchableOpacity onPress={() => claimTier(category, xp)} style={{ backgroundColor: '#ff9800', padding: 8, borderRadius: 8 }}>
             <Text style={{ color: '#fff', fontWeight: 'bold' }}>Získat {xp} XP</Text>
           </TouchableOpacity>
         )}
-        {isClaimed && <Text style={{ color: '#2d6cdf', fontWeight: 'bold' }}>Vybráno</Text>}
       </View>
     );
   };
@@ -618,16 +798,14 @@ function AchievementsScreen({ workouts, user, onUpdateUser }) {
 
       <Text style={styles.subtitle}>Odměny za pravidelnost (XP)</Text>
       <View style={styles.card}>
-        {renderReward('workout_1', 50, workoutCount >= 1, "První krok (1 trénink)")}
-        {renderReward('workout_10', 200, workoutCount >= 10, "Železná vůle (10 tréninků)")}
-        {renderReward('workout_50', 1000, workoutCount >= 50, "Gym Rat (50 tréninků)")}
+        {renderDynamicReward('workout_tier', WORKOUT_MILESTONES, workoutCount, "Pravidelnost")}
       </View>
 
       <Text style={styles.subtitle}>PR Výzvy (XP)</Text>
       <View style={styles.card}>
-        {renderReward('pr_bench_100', 300, prs.bench >= 100, "Klubovka 100 na bench")}
-        {renderReward('pr_squat_100', 300, prs.squat >= 100, "Dřep se 100!")}
-        {renderReward('pr_deadlift_150', 500, prs.deadlift >= 150, "Silák v tahu (150 kg)")}
+        {renderDynamicReward('bench_tier', BENCH_MILESTONES, prs.bench, "Bench PR")}
+        {renderDynamicReward('squat_tier', SQUAT_MILESTONES, prs.squat, "Squat PR")}
+        {renderDynamicReward('deadlift_tier', DEADLIFT_MILESTONES, prs.deadlift, "Deadlift PR")}
       </View>
       <View style={{ height: 40 }} />
     </ScrollView>
@@ -635,6 +813,9 @@ function AchievementsScreen({ workouts, user, onUpdateUser }) {
 }
 
 function GalleryScreen() {
+  const theme = useColorScheme();
+  const styles = useMemo(() => getStyles(theme), [theme]);
+
   const [photos, setPhotos] = useState([]);
   const [category, setCategory] = useState("Vše");
   const categories = ["Vše", "Záda/Prsa", "Ruce", "Nohy", "Břicho", "Celé tělo"];
@@ -750,6 +931,9 @@ function GalleryScreen() {
 }
 
 function ProfileScreen() {
+  const theme = useColorScheme();
+  const styles = useMemo(() => getStyles(theme), [theme]);
+
   const [goalType, setGoalType] = useState('Síla');
   const [goalText, setGoalText] = useState('');
   const [saved, setSaved] = useState(false);
@@ -905,6 +1089,8 @@ function ProfileScreen() {
 }
 
 function WeightScreen() {
+  const theme = useColorScheme();
+  const styles = useMemo(() => getStyles(theme), [theme]);
   const [weights, setWeights] = useState([]);
   const [newWeight, setNewWeight] = useState("");
 
@@ -1019,10 +1205,70 @@ function WeightScreen() {
   );
 }
 
-// --- Main App ---
+// --- HLAVNÍ NAVIGACE A SPRÁVA STAVU ---
+// Toto je mozek celé aplikace, který drží informace o uživateli a trénincích
+
+
+function TermsOfUseScreen({ onAccept, onDecline }) {
+  const theme = useColorScheme();
+  const styles = useMemo(() => getStyles(theme), [theme]);
+  return (
+    <View style={styles.containerCenter}>
+      <Text style={styles.title}>Podmínky užívání</Text>
+      <ScrollView style={{ flex: 1, marginBottom: 20 }}>
+        <Text style={styles.termsText}>
+          Tato aplikace slouží pro sledování fitness pokroku. Všechna vaše data jsou zpracovávána bezpečně.
+          Používáním aplikace souhlasíte s tím, že autor nenese odpovědnost za případná zranění při tréninku.
+          Aplikace nevyužívá vaše data k prodeji třetím stranám.
+        </Text>
+      </ScrollView>
+      <TouchableOpacity style={styles.primaryButton} onPress={onAccept}>
+        <Text style={styles.primaryButtonText}>Souhlasím</Text>
+      </TouchableOpacity>
+      {onDecline && (
+        <TouchableOpacity style={[styles.primaryButton, { backgroundColor: '#e0e0e0', marginTop: 10 }]} onPress={onDecline}>
+          <Text style={[styles.primaryButtonText, { color: '#333' }]}>Nesouhlasím</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
+
+function getLocalDate() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 export default function App() {
+  const theme = useColorScheme();
+  const styles = useMemo(() => getStyles(theme), [theme]);
+
   const [user, setUser] = useState(null);
+  const [termsAccepted, setTermsAccepted] = useState(true);
+
+  const handleLogout = async () => {
+    try {
+      await GoogleSignin.signOut();
+    } catch (error) {
+      console.log('Google signOut error', error);
+    }
+    setUser(null);
+  };
+
+  useEffect(() => {
+    AsyncStorage.getItem('@terms_accepted').then(res => {
+      if (res !== 'true') setTermsAccepted(false);
+    });
+  }, []);
+
+  const handleAcceptTerms = async () => {
+    await AsyncStorage.setItem('@terms_accepted', 'true');
+    setTermsAccepted(true);
+  };
+
   const [authBusy, setAuthBusy] = useState(false);
   const [workouts, setWorkouts] = useState([]);
 
@@ -1038,9 +1284,14 @@ export default function App() {
   const handleAuth = async (creds) => {
     setAuthBusy(true);
     try {
-      const u = creds.mode === "register"
-        ? await register(creds.name, creds.email, creds.password)
-        : await login(creds.email, creds.password);
+      let u;
+      if (creds.mode === 'google') {
+        u = await authGoogle(creds.user.email, creds.user.displayName, creds.user.uid);
+      } else {
+        u = creds.mode === "register"
+          ? await register(creds.name, creds.email, creds.password)
+          : await login(creds.email, creds.password);
+      }
       setUser(u);
       setAuthBusy(false);
       return u;
@@ -1095,6 +1346,16 @@ export default function App() {
     }
   };
 
+  if (!termsAccepted) {
+    return (
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <SafeAreaProvider>
+          <TermsOfUseScreen onAccept={handleAcceptTerms} />
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
+    );
+  }
+
   if (!user) {
     return (
       <GestureHandlerRootView style={{ flex: 1 }}>
@@ -1110,10 +1371,16 @@ export default function App() {
       <SafeAreaProvider>
         <NavigationContainer>
           <Tab.Navigator screenOptions={{ tabBarActiveTintColor: "#2d6cdf" }}>
-            <Tab.Screen name="Domů">
-              {() => <HomeScreen user={user} onLogout={() => setUser(null)} />}
+            <Tab.Screen
+              name="Domů"
+              options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>🏠</Text> }}
+            >
+              {() => <HomeScreen user={user} workouts={workouts} onLogout={handleLogout} onUpdateUser={newStats => setUser(u => ({ ...u, ...newStats }))} />}
             </Tab.Screen>
-            <Tab.Screen name="Nový Trénink">
+            <Tab.Screen
+              name="Nový Trénink"
+              options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>🏋️</Text> }}
+            >
               {() => (
                 <WorkoutScreen
                   workouts={workouts}
@@ -1121,15 +1388,21 @@ export default function App() {
                 />
               )}
             </Tab.Screen>
-            <Tab.Screen name="Progress">
+            <Tab.Screen
+              name="Progress"
+              options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>📈</Text> }}
+            >
               {() => <ProgressScreen workouts={workouts} />}
             </Tab.Screen>
-            <Tab.Screen name="Ocenění">
+            <Tab.Screen
+              name="Ocenění"
+              options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>🏆</Text> }}
+            >
               {() => <AchievementsScreen workouts={workouts} user={user} onUpdateUser={newStats => setUser(u => ({ ...u, ...newStats }))} />}
             </Tab.Screen>
-            <Tab.Screen name="Cíle" component={ProfileScreen} />
-            <Tab.Screen name="Váha" component={WeightScreen} />
-            <Tab.Screen name="Galerie" component={GalleryScreen} />
+            <Tab.Screen name="Cíle" component={ProfileScreen} options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>🎯</Text> }} />
+            <Tab.Screen name="Váha" component={WeightScreen} options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>⚖️</Text> }} />
+            <Tab.Screen name="Galerie" component={GalleryScreen} options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>🖼️</Text> }} />
           </Tab.Navigator>
         </NavigationContainer>
       </SafeAreaProvider>
@@ -1137,7 +1410,106 @@ export default function App() {
   );
 }
 
-const styles = StyleSheet.create({
+
+const getStyles = (theme) => {
+  const isDark = theme === 'dark';
+  const colors = {
+    bg: isDark ? '#121212' : '#f2f2f7',
+    card: isDark ? '#1e1e1e' : '#fff',
+    text: isDark ? '#fff' : '#333',
+    subText: isDark ? '#aaa' : '#666',
+    border: isDark ? '#333' : '#ddd',
+    primary: '#2d6cdf',
+    btnText: '#fff',
+    inputBg: isDark ? '#2c2c2e' : '#f9f9fc',
+    inputText: isDark ? '#fff' : '#000',
+    selectedBg: isDark ? '#3a3a3c' : '#eef',
+  };
+
+  return StyleSheet.create({
+    termsText: { color: colors.text, fontSize: 16, lineHeight: 24 },
+    container: { flex: 1, padding: 16, backgroundColor: colors.bg },
+    containerCenter: { flex: 1, justifyContent: 'center', padding: 16, backgroundColor: colors.bg },
+    title: { fontSize: 28, fontWeight: '800', marginBottom: 20, color: colors.text },
+    subtitle: { fontSize: 18, fontWeight: '700', marginTop: 20, marginBottom: 10, color: colors.subText },
+
+    input: { backgroundColor: colors.inputBg, color: colors.inputText, padding: 14, borderRadius: 10, borderWidth: 1, borderColor: colors.border, marginBottom: 12, fontSize: 16 },
+    primaryButton: { backgroundColor: colors.primary, padding: 16, borderRadius: 10, alignItems: 'center', marginTop: 10 },
+    primaryButtonText: { color: colors.btnText, fontSize: 17, fontWeight: '700' },
+    linkButton: { marginTop: 16, alignItems: 'center' },
+    linkButtonText: { color: colors.primary, fontSize: 16 },
+    error: { color: 'red', marginBottom: 10 },
+
+    header: { marginBottom: 30 },
+    greeting: { fontSize: 16, color: colors.subText, textTransform: 'uppercase' },
+    userName: { fontSize: 32, fontWeight: '900', color: colors.text },
+
+    levelCard: { backgroundColor: colors.primary, padding: 24, borderRadius: 20, shadowColor: colors.primary, shadowOpacity: 0.4, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, marginBottom: 40 },
+    levelRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
+    levelLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: 'bold' },
+    levelValue: { color: '#fff', fontSize: 48, fontWeight: '900', lineHeight: 48 },
+    rankLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: 'bold' },
+    rankValue: { color: '#fff', fontSize: 20, fontWeight: 'bold', marginTop: 4 },
+
+    progressContainer: { height: 12, backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: 6, overflow: 'hidden', marginBottom: 8 },
+    progressBar: { height: '100%', backgroundColor: '#fff', borderRadius: 6 },
+    progressTextRow: { flexDirection: 'row', justifyContent: 'space-between' },
+    xpText: { color: 'rgba(255,255,255,0.9)', fontSize: 12, fontWeight: '600' },
+    xpDetail: { color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 4, textAlign: 'center' },
+
+    motivationalText: { fontSize: 16, fontStyle: 'italic', color: colors.subText, textAlign: 'center', marginHorizontal: 30 },
+
+    logoutBtn: { padding: 16, alignItems: 'center' },
+    logoutText: { color: '#d32f2f', fontWeight: 'bold' },
+
+    bigStartBtn: { backgroundColor: colors.primary, padding: 40, borderRadius: 20, alignItems: 'center', marginVertical: 20, shadowColor: colors.primary, shadowOpacity: 0.3, shadowRadius: 10 },
+    bigStartBtnText: { color: '#fff', fontSize: 22, fontWeight: '900', letterSpacing: 1 },
+
+    activeHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, padding: 16, backgroundColor: colors.card, borderRadius: 12 },
+    activeLabel: { fontSize: 14, color: colors.subText },
+    timerData: { fontSize: 32, fontVariant: ['tabular-nums'], fontWeight: 'bold', color: colors.text },
+
+    card: { backgroundColor: colors.card, padding: 16, borderRadius: 12, marginBottom: 12 },
+    cardTitle: { fontSize: 16, fontWeight: '600', marginBottom: 12, color: colors.text },
+
+    selectBtn: { backgroundColor: colors.inputBg, padding: 12, borderRadius: 8, alignItems: 'center', marginBottom: 12 },
+    selectBtnText: { color: colors.primary, fontSize: 16, fontWeight: '600' },
+    selectedExRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, padding: 8, backgroundColor: colors.selectedBg, borderRadius: 8 },
+    selectedExText: { fontSize: 18, fontWeight: 'bold', color: colors.text },
+
+    row: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 },
+    inputSmall: { flex: 1, backgroundColor: colors.inputBg, color: colors.inputText, borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 10, marginHorizontal: 4, textAlign: 'center' },
+
+    miniCard: { backgroundColor: colors.card, padding: 12, borderRadius: 8, marginBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderLeftWidth: 4, borderLeftColor: colors.primary },
+
+    modalContainer: { flex: 1, backgroundColor: colors.bg, padding: 16 },
+    modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, marginTop: 10 },
+    modalTitle: { fontSize: 20, fontWeight: 'bold', color: colors.text },
+    closeText: { color: colors.primary, fontSize: 17 },
+    pickerItem: { padding: 16, backgroundColor: colors.card, borderBottomWidth: 1, borderBottomColor: colors.border },
+    pickerItemText: { fontSize: 16, color: colors.text },
+
+    historyCard: { backgroundColor: colors.card, padding: 16, borderRadius: 12, marginBottom: 10 },
+    historyHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
+    historyDate: { color: colors.subText, fontSize: 14 },
+    historyXp: { color: colors.primary, fontWeight: 'bold' },
+    historySubtitle: { fontSize: 16, fontWeight: '600', marginBottom: 4, color: colors.text },
+
+    legendBox: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 30, backgroundColor: colors.card, padding: 10, borderRadius: 12 },
+    legendItem: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 10, marginVertical: 5 },
+    colorBox: { width: 16, height: 16, borderRadius: 4, marginRight: 6 },
+
+    goalTypeBtn: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 20, backgroundColor: colors.border },
+    goalTypeBtnActive: { backgroundColor: colors.primary },
+    goalTypeBtnText: { fontWeight: '600', color: colors.subText },
+
+    quoteCard: { backgroundColor: colors.card, padding: 20, borderRadius: 16, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, alignItems: 'center', marginBottom: 20 },
+    quoteLabel: { color: colors.primary, fontWeight: 'bold', marginBottom: 8, fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 },
+    motivationalQuote: { fontSize: 16, fontStyle: 'italic', color: colors.text, textAlign: 'center', fontWeight: '500' },
+  });
+}; // End of getStyles
+
+const oldStylesToRemove = {
   container: { flex: 1, padding: 16, backgroundColor: '#f2f2f7' },
   containerCenter: { flex: 1, justifyContent: 'center', padding: 16, backgroundColor: '#fff' },
   title: { fontSize: 28, fontWeight: '800', marginBottom: 20, color: '#333' },
@@ -1244,4 +1616,4 @@ const styles = StyleSheet.create({
   quoteCard: { backgroundColor: '#fff', padding: 20, borderRadius: 16, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, alignItems: 'center', marginBottom: 20 },
   quoteLabel: { color: '#2d6cdf', fontWeight: 'bold', marginBottom: 8, fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 },
   motivationalQuote: { fontSize: 16, fontStyle: 'italic', color: '#444', textAlign: 'center', fontWeight: '500' },
-});
+};
