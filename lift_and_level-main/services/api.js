@@ -1,5 +1,5 @@
-
 import Constants from "expo-constants";
+import { Platform } from "react-native";
 
 const getBaseUrl = () => {
   if (process.env.EXPO_PUBLIC_API_URL) {
@@ -13,7 +13,8 @@ const getBaseUrl = () => {
     return `http://${ip}:3000`; // Předpokládá backend na portu 3000
   }
 
-  return "http://localhost:3000";
+  // Fallback pro Android emulátor
+  return Platform.OS === 'android' ? "http://10.0.2.2:3000" : "http://localhost:3000";
 };
 
 const baseUrl = getBaseUrl();

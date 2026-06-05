@@ -369,7 +369,7 @@ function HomeScreen({ user, workouts, onLogout, onUpdateUser }) {
         <Text style={styles.quoteLabel}>Výzvy na aktuální období</Text>
 
         {/* Daily */}
-        <View style={{ marginTop: 10, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: '#eee' }}>
+        <View style={{ marginTop: 10, paddingBottom: 15, borderBottomWidth: 1, borderBottomColor: '#eee', alignItems: 'center' }}>
           <Text style={{ fontWeight: 'bold', fontSize: 16 }}>Denní výzva: Objemový král</Text>
           <Text style={{ color: '#666', marginBottom: 5 }}>Zvedni dnes celkem 1000 kg</Text>
           <Text style={{ color: isDailyComplete ? 'green' : '#ff9800', fontWeight: 'bold' }}>Stav: {dailyVolume} / 1000 kg</Text>
@@ -383,7 +383,7 @@ function HomeScreen({ user, workouts, onLogout, onUpdateUser }) {
         </View>
 
         {/* Weekly */}
-        <View style={{ marginTop: 10 }}>
+        <View style={{ marginTop: 15, alignItems: 'center' }}>
           <Text style={{ fontWeight: 'bold', fontSize: 16 }}>Týdenní výzva: Železná disciplína</Text>
           <Text style={{ color: '#666', marginBottom: 5 }}>Odcvič 3 tréninky za posledních 7 dní</Text>
           <Text style={{ color: isWeeklyComplete ? 'green' : '#ff9800', fontWeight: 'bold' }}>Stav: {currentWeekWorkouts} / 3 tréninky</Text>
@@ -930,15 +930,28 @@ function GalleryScreen() {
   );
 }
 
+// --- OBRAZOVKA PROFILU (Sjednocené Cíle, Váha a Galerie) ---
 function ProfileScreen() {
-  const theme = useColorScheme();
+    const theme = useColorScheme();
   const styles = useMemo(() => getStyles(theme), [theme]);
 
+  // Cíle state
   const [goalType, setGoalType] = useState('Síla');
   const [goalText, setGoalText] = useState('');
   const [saved, setSaved] = useState(false);
   const [goals, setGoals] = useState([]);
   const [activeSupps, setActiveSupps] = useState([]);
+
+  // Váha state
+  const [weights, setWeights] = useState([]);
+  const [newWeight, setNewWeight] = useState("");
+
+  // Galerie state
+  const [photos, setPhotos] = useState([]);
+  const [galleryCategory, setGalleryCategory] = useState('Vše');
+  const galleryCategories = ["Vše", "Prsa", "Záda", "Ruce", "Nohy", "Břicho", "Celé tělo"];
+  const [modalVisible, setModalVisible] = useState(false);
+  const [selectedImage, setSelectedImage] = useState(null);
 
   const SUPPLEMENTS_DB = [
     { id: 'creatine', name: 'Kreatin', boost: 5, icon: '⚡' },
@@ -949,40 +962,45 @@ function ProfileScreen() {
   ];
 
   useEffect(() => {
-    const loadGoals = async () => {
+    const loadData = async () => {
       try {
         const strGoals = await AsyncStorage.getItem('@personal_goals_list');
-        if (strGoals) {
-          setGoals(JSON.parse(strGoals));
-        } else {
-          // Zpětná kompatibilita se starým uložením
-          const oldGoalStr = await AsyncStorage.getItem('@personal_goal');
-          if (oldGoalStr) {
-            const oldGoal = JSON.parse(oldGoalStr);
-            setGoals([{ id: Date.now().toString(), type: oldGoal.type || 'Síla', text: oldGoal.text || '' }]);
+        if (strGoals) setGoals(JSON.parse(strGoals));
+
+        const strSupps = await AsyncStorage.getItem('@active_supps');
+        if (strSupps) setActiveSupps(JSON.parse(strSupps));
+
+        const storedWeights = await AsyncStorage.getItem('@weight_history');
+        if (storedWeights) setWeights(JSON.parse(storedWeights));
+
+        // Load progress photos
+        const storedPhotos = await AsyncStorage.getItem('@progress_photos');
+        if (storedPhotos) {
+          let parsedPhotos = JSON.parse(storedPhotos);
+          // Migrace ze staré kategorie 'Záda/Prsa'
+          let changed = false;
+          parsedPhotos = parsedPhotos.map(p => {
+            if (p.category === 'Záda/Prsa') {
+              changed = true;
+              return { ...p, category: 'Prsa' }; // Defaultní split na Prsa při migraci
+            }
+            return p;
+          });
+          setPhotos(parsedPhotos);
+          if (changed) {
+             await AsyncStorage.setItem('@progress_photos', JSON.stringify(parsedPhotos));
           }
         }
       } catch (e) { }
     };
-
-    const loadSupps = async () => {
-      try {
-        const str = await AsyncStorage.getItem('@active_supps');
-        if (str) setActiveSupps(JSON.parse(str));
-      } catch (e) { }
-    };
-
-    loadGoals();
-    loadSupps();
+    loadData();
   }, []);
 
+  // --- CÍLE METODY ---
   const toggleSupp = async (id) => {
     let newSupps = [...activeSupps];
-    if (newSupps.includes(id)) {
-      newSupps = newSupps.filter(x => x !== id);
-    } else {
-      newSupps.push(id);
-    }
+    if (newSupps.includes(id)) newSupps = newSupps.filter(x => x !== id);
+    else newSupps.push(id);
     setActiveSupps(newSupps);
     await AsyncStorage.setItem('@active_supps', JSON.stringify(newSupps));
   };
@@ -990,13 +1008,10 @@ function ProfileScreen() {
   const saveGoal = async () => {
     Keyboard.dismiss();
     if (!goalText.trim()) return;
-
     const newGoal = { id: Date.now().toString(), type: goalType, text: goalText };
     const newGoals = [newGoal, ...goals];
-
     await AsyncStorage.setItem('@personal_goals_list', JSON.stringify(newGoals));
     setGoals(newGoals);
-
     setGoalText('');
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -1008,43 +1023,107 @@ function ProfileScreen() {
     setGoals(newGoals);
   };
 
+  // --- VÁHA METODY ---
+  const addWeight = async () => {
+    if (!newWeight || isNaN(newWeight.replace(',', '.'))) {
+      Alert.alert("Chyba", "Zadejte platnou váhu.");
+      return;
+    }
+    const cleanWeight = Number(newWeight.replace(',', '.'));
+    const dt = new Date().toLocaleDateString('cs-CZ');
+    let updated = [...weights];
+    const index = updated.findIndex(w => w.date === dt);
+    if (index >= 0) updated[index].weight = cleanWeight;
+    else updated.push({ date: dt, weight: cleanWeight });
+
+    setWeights(updated);
+    await AsyncStorage.setItem('@weight_history', JSON.stringify(updated));
+    setNewWeight("");
+    Keyboard.dismiss();
+  };
+
+  const chartData = {
+    labels: weights.length > 0 ? weights.slice(-7).map(w => w.date.substring(0, 5)) : ["0"],
+    datasets: [{ data: weights.length > 0 ? weights.slice(-7).map(w => w.weight) : [0] }]
+  };
+
+  // --- GALERIE METODY ---
+  const saveNewPhoto = async (uri) => {
+    const newPhoto = {
+      id: Date.now().toString(),
+      uri: uri,
+      date: new Date().toLocaleDateString('cs-CZ'),
+      category: galleryCategory === "Vše" ? "Celé tělo" : galleryCategory
+    };
+    const updatedPhotos = [newPhoto, ...photos];
+    setPhotos(updatedPhotos);
+    await AsyncStorage.setItem('@progress_photos', JSON.stringify(updatedPhotos));
+  };
+
+  const pickImage = async () => {
+    let result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.8,
+    });
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      await saveNewPhoto(result.assets[0].uri);
+    }
+  };
+
+  const takePhoto = async () => {
+    const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+    if (permissionResult.granted === false) {
+      Alert.alert("Přístup odepřen", "Pro focení je potřeba povolit přístup k fotoaparátu.");
+      return;
+    }
+    let result = await ImagePicker.launchCameraAsync({
+      allowsEditing: true,
+      quality: 0.8,
+    });
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      await saveNewPhoto(result.assets[0].uri);
+    }
+  };
+
+  const deleteImage = async (uri) => {
+    Alert.alert("Smazat fotku", "Opravdu chcete tuto fotku smazat?", [
+      { text: "Zrušit", style: "cancel" },
+      { text: "Smazat", style: "destructive", onPress: async () => {
+          const updatedPhotos = photos.filter(img => img.uri !== uri);
+          setPhotos(updatedPhotos);
+          await AsyncStorage.setItem('@progress_photos', JSON.stringify(updatedPhotos));
+          setModalVisible(false);
+        }
+      }
+    ]);
+  };
+
   const types = ['Síla', 'Váha', 'Osobní'];
+  const displayedPhotos = galleryCategory === "Vše" ? photos : photos.filter(p => p.category === galleryCategory);
 
   return (
     <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
-      <Text style={styles.title}>🎯 Osobní Cíle</Text>
+      <Text style={styles.title}>👤 Můj Profil</Text>
 
+      {/* --- SEKVENCE 1: CÍLE --- */}
+      <Text style={styles.subtitle}>🎯 Osobní Cíle</Text>
       <View style={styles.card}>
         <Text style={{ fontWeight: 'bold', fontSize: 16, marginBottom: 10 }}>Vyber si zaměření:</Text>
         <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginBottom: 20 }}>
           {types.map(t => (
-            <TouchableOpacity
-              key={t}
-              style={[styles.goalTypeBtn, goalType === t && styles.goalTypeBtnActive]}
-              onPress={() => setGoalType(t)}
-            >
+            <TouchableOpacity key={t} style={[styles.goalTypeBtn, goalType === t && styles.goalTypeBtnActive]} onPress={() => setGoalType(t)}>
               <Text style={[styles.goalTypeBtnText, goalType === t && { color: '#fff' }]}>{t}</Text>
             </TouchableOpacity>
           ))}
         </View>
-        <Text style={{ fontWeight: 'bold', fontSize: 16, marginBottom: 10 }}>Tvůj konkrétní cíl:</Text>
-        <TextInput
-          style={[styles.input, { height: 100, textAlignVertical: 'top' }]}
-          placeholder="Např: Zvednout na bench-press 100kg..."
-          multiline
-          value={goalText}
-          onChangeText={setGoalText}
-        />
+        <TextInput style={[styles.input, { height: 80, textAlignVertical: 'top' }]} placeholder="Např: Zvednout na bench-press 100kg..." multiline value={goalText} onChangeText={setGoalText} />
         <TouchableOpacity style={styles.primaryButton} onPress={saveGoal}>
           <Text style={styles.primaryButtonText}>{saved ? "Uloženo ✔️" : "Uložit cíl"}</Text>
         </TouchableOpacity>
       </View>
 
-      <Text style={styles.subtitle}>Moje cíle</Text>
-      {goals.length === 0 && (
-        <Text style={{ color: '#666', textAlign: 'center', marginTop: 10 }}>Zatím nemáš žádné cíle.</Text>
-      )}
-      {goals.map(g => (
+      {goals.length > 0 && goals.map(g => (
         <View key={g.id} style={[styles.card, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
           <View style={{ flex: 1, paddingRight: 10 }}>
             <Text style={{ fontWeight: 'bold', color: '#2d6cdf', marginBottom: 4 }}>{g.type}</Text>
@@ -1055,6 +1134,8 @@ function ProfileScreen() {
           </TouchableOpacity>
         </View>
       ))}
+
+      {/* --- SEKVENCE 2: DOPLŇKY --- */}
       <Text style={styles.subtitle}>💊 Aktivní Doplňky (XP Boost)</Text>
       <View style={styles.card}>
         <Text style={{ color: '#666', marginBottom: 10 }}>
@@ -1063,144 +1144,86 @@ function ProfileScreen() {
         {SUPPLEMENTS_DB.map(s => {
           const isActive = activeSupps.includes(s.id);
           return (
-            <TouchableOpacity
-              key={s.id}
-              onPress={() => toggleSupp(s.id)}
-              style={{
-                flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-                padding: 12, backgroundColor: isActive ? '#e3f2fd' : '#f9f9fc',
-                borderWidth: 1, borderColor: isActive ? '#2d6cdf' : '#eee', borderRadius: 8, marginBottom: 8
-              }}
+            <TouchableOpacity key={s.id} onPress={() => toggleSupp(s.id)}
+              style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 12, backgroundColor: isActive ? '#e3f2fd' : '#f9f9fc', borderWidth: 1, borderColor: isActive ? '#2d6cdf' : '#eee', borderRadius: 8, marginBottom: 8 }}
             >
-              <Text style={{ fontSize: 16, fontWeight: isActive ? 'bold' : 'normal', color: isActive ? '#2d6cdf' : '#333' }}>
-                {s.icon} {s.name}
-              </Text>
-              <Text style={{ color: isActive ? '#2d6cdf' : '#888', fontWeight: 'bold' }}>
-                +{s.boost} %
-              </Text>
+              <Text style={{ fontSize: 16, fontWeight: isActive ? 'bold' : 'normal', color: isActive ? '#2d6cdf' : '#333' }}>{s.icon} {s.name}</Text>
+              <Text style={{ color: isActive ? '#2d6cdf' : '#888', fontWeight: 'bold' }}>+{s.boost} %</Text>
             </TouchableOpacity>
           );
         })}
       </View>
 
-      <View style={{ height: 40 }} />
-    </ScrollView>
-  );
-}
-
-function WeightScreen() {
-  const theme = useColorScheme();
-  const styles = useMemo(() => getStyles(theme), [theme]);
-  const [weights, setWeights] = useState([]);
-  const [newWeight, setNewWeight] = useState("");
-
-  useEffect(() => {
-    const loadWeights = async () => {
-      try {
-        const stored = await AsyncStorage.getItem('@weight_history');
-        if (stored) {
-          setWeights(JSON.parse(stored));
-        }
-      } catch (e) { }
-    };
-    loadWeights();
-  }, []);
-
-  const addWeight = async () => {
-    if (!newWeight || isNaN(newWeight.replace(',', '.'))) {
-      Alert.alert("Chyba", "Zadejte platnou váhu.");
-      return;
-    }
-    const cleanWeight = Number(newWeight.replace(',', '.'));
-    const dt = new Date().toLocaleDateString('cs-CZ');
-    let updated = [...weights];
-
-    // Check if there is already a weight for today
-    const index = updated.findIndex(w => w.date === dt);
-    if (index >= 0) {
-      updated[index].weight = cleanWeight;
-    } else {
-      updated.push({ date: dt, weight: cleanWeight });
-    }
-
-    setWeights(updated);
-    await AsyncStorage.setItem('@weight_history', JSON.stringify(updated));
-    setNewWeight("");
-    Keyboard.dismiss();
-  };
-
-  const chartData = {
-    labels: weights.length > 0 ? weights.slice(-7).map(w => w.date.substring(0, 5)) : ["0"],
-    datasets: [
-      {
-        data: weights.length > 0 ? weights.slice(-7).map(w => w.weight) : [0]
-      }
-    ]
-  };
-
-  return (
-    <ScrollView style={styles.container}>
-      <Text style={styles.title}>⚖️ Sledování Váhy</Text>
-
+      {/* --- SEKVENCE 3: VÁHA --- */}
+      <Text style={styles.subtitle}>⚖️ Sledování Váhy</Text>
       <View style={styles.card}>
         <Text style={{ fontWeight: 'bold', marginBottom: 10, fontSize: 16 }}>Dnešní váha (kg):</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <TextInput
-            style={[styles.input, { flex: 1, marginBottom: 0 }]}
-            placeholder="Nová váha (např. 80.5)"
-            keyboardType="numeric"
-            value={newWeight}
-            onChangeText={setNewWeight}
-          />
+          <TextInput style={[styles.input, { flex: 1, marginBottom: 0 }]} placeholder="Např. 80.5" keyboardType="numeric" value={newWeight} onChangeText={setNewWeight} />
           <TouchableOpacity style={[styles.primaryButton, { marginTop: 0, marginLeft: 10, padding: 14 }]} onPress={addWeight}>
             <Text style={styles.primaryButtonText}>Uložit</Text>
           </TouchableOpacity>
         </View>
       </View>
 
-      <Text style={styles.subtitle}>Historie ({weights.length})</Text>
-
-      {weights.length > 0 ? (
+      {weights.length > 0 && (
         <View style={{ alignItems: 'center', backgroundColor: '#fff', borderRadius: 12, paddingVertical: 10, marginBottom: 20 }}>
-          <LineChart
-            data={chartData}
-            width={Dimensions.get("window").width - 50}
-            height={220}
-            yAxisSuffix=" kg"
-            chartConfig={{
-              backgroundColor: "#ffffff",
-              backgroundGradientFrom: "#ffffff",
-              backgroundGradientTo: "#ffffff",
-              decimalPlaces: 1,
-              color: (opacity = 1) => `rgba(45, 108, 223, ${opacity})`,
-              labelColor: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
-              style: {
-                borderRadius: 16
-              },
-              propsForDots: {
-                r: "5",
-                strokeWidth: "2",
-                stroke: "#1a4dad"
-              }
-            }}
-            bezier
-            style={{
-              marginVertical: 8,
-              borderRadius: 16
-            }}
+          <LineChart data={chartData} width={Dimensions.get("window").width - 50} height={220} yAxisSuffix=" kg"
+            chartConfig={{ backgroundColor: "#ffffff", backgroundGradientFrom: "#ffffff", backgroundGradientTo: "#ffffff", decimalPlaces: 1, color: (o = 1) => `rgba(45, 108, 223, ${o})`, labelColor: (o = 1) => `rgba(0, 0, 0, ${o})`, style: { borderRadius: 16 }, propsForDots: { r: "5", strokeWidth: "2", stroke: "#1a4dad" } }}
+            bezier style={{ marginVertical: 8, borderRadius: 16 }}
           />
         </View>
-      ) : (
-        <Text style={{ color: '#666', marginTop: 10, marginBottom: 20 }}>Přidejte první záznam pro zobrazení grafu.</Text>
       )}
 
-      {weights.slice().reverse().map((w, index) => (
-        <View key={index} style={[styles.card, { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }]}>
-          <Text style={{ fontSize: 16 }}>{w.date}</Text>
-          <Text style={{ fontSize: 16, fontWeight: 'bold' }}>{w.weight} kg</Text>
+      {/* --- SEKVENCE 4: GALERIE --- */}
+      <Text style={styles.subtitle}>🖼️ Fotogalerie Progressu</Text>
+
+      <View style={{ flexDirection: 'row', justifyContent: 'center', flexWrap: 'wrap', marginBottom: 15 }}>
+        {galleryCategories.map(c => (
+          <TouchableOpacity
+            key={c}
+            onPress={() => setGalleryCategory(c)}
+            style={[styles.goalTypeBtn, galleryCategory === c && styles.goalTypeBtnActive, { margin: 4 }]}
+          >
+            <Text style={[styles.goalTypeBtnText, galleryCategory === c && { color: '#fff' }]}>{c}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15 }}>
+        <TouchableOpacity style={[styles.primaryButton, { flex: 1, marginRight: 5, flexDirection: 'row', justifyContent: 'center' }]} onPress={takePhoto}>
+          <Text style={styles.primaryButtonText}>📷 Vyfotit</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.primaryButton, { flex: 1, marginLeft: 5, flexDirection: 'row', justifyContent: 'center', backgroundColor: '#444' }]} onPress={pickImage}>
+          <Text style={[styles.primaryButtonText, { color: '#fff' }]}>📁 Z galerie</Text>
+        </TouchableOpacity>
+      </View>
+
+      {displayedPhotos.length === 0 ? (
+        <Text style={{ textAlign: 'center', color: '#888', marginTop: 20 }}>Zatím nemáš žádné fotky v této kategorii.</Text>
+      ) : (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-start' }}>
+          {displayedPhotos.map((photo, index) => (
+            <TouchableOpacity key={photo.id || index} onPress={() => { setSelectedImage(photo.uri); setModalVisible(true); }} style={{ width: '31%', marginRight: index % 3 !== 2 ? '3.5%' : 0, marginBottom: 10 }}>
+              <Image source={{ uri: photo.uri }} style={{ width: '100%', height: 120, borderRadius: 8, backgroundColor: '#eee' }} />
+            </TouchableOpacity>
+          ))}
         </View>
-      ))}
-      <View style={{ height: 40 }} />
+      )}
+
+      <Modal visible={modalVisible} transparent={true} animationType="fade" onRequestClose={() => setModalVisible(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center' }}>
+          <TouchableOpacity style={{ position: 'absolute', top: 50, right: 20, zIndex: 10, padding: 10 }} onPress={() => setModalVisible(false)}>
+            <Text style={{ color: '#fff', fontSize: 24, fontWeight: 'bold' }}>✕</Text>
+          </TouchableOpacity>
+          {selectedImage && <Image source={{ uri: selectedImage }} style={{ width: '100%', height: '70%', resizeMode: 'contain' }} />}
+          <TouchableOpacity style={{ marginTop: 30, backgroundColor: '#d32f2f', paddingVertical: 12, paddingHorizontal: 30, borderRadius: 8 }} onPress={() => deleteImage(selectedImage)}>
+            <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Smazat fotku</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
+
+      <View style={{ height: 60 }} />
     </ScrollView>
   );
 }
@@ -1373,13 +1396,13 @@ export default function App() {
           <Tab.Navigator screenOptions={{ tabBarActiveTintColor: "#2d6cdf" }}>
             <Tab.Screen
               name="Domů"
-              options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>🏠</Text> }}
+              options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 28, color }}>🏠</Text> }}
             >
               {() => <HomeScreen user={user} workouts={workouts} onLogout={handleLogout} onUpdateUser={newStats => setUser(u => ({ ...u, ...newStats }))} />}
             </Tab.Screen>
             <Tab.Screen
               name="Nový Trénink"
-              options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>🏋️</Text> }}
+              options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 28, color }}>🏋️</Text> }}
             >
               {() => (
                 <WorkoutScreen
@@ -1390,19 +1413,17 @@ export default function App() {
             </Tab.Screen>
             <Tab.Screen
               name="Progress"
-              options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>📈</Text> }}
+              options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 28, color }}>📈</Text> }}
             >
               {() => <ProgressScreen workouts={workouts} />}
             </Tab.Screen>
             <Tab.Screen
               name="Ocenění"
-              options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>🏆</Text> }}
+              options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 28, color }}>🏆</Text> }}
             >
               {() => <AchievementsScreen workouts={workouts} user={user} onUpdateUser={newStats => setUser(u => ({ ...u, ...newStats }))} />}
             </Tab.Screen>
-            <Tab.Screen name="Cíle" component={ProfileScreen} options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>🎯</Text> }} />
-            <Tab.Screen name="Váha" component={WeightScreen} options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>⚖️</Text> }} />
-            <Tab.Screen name="Galerie" component={GalleryScreen} options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>🖼️</Text> }} />
+            <Tab.Screen name="Profil" component={ProfileScreen} options={{ tabBarIcon: ({ color }) => <Text style={{ fontSize: 28, color }}>👤</Text> }} />
           </Tab.Navigator>
         </NavigationContainer>
       </SafeAreaProvider>
