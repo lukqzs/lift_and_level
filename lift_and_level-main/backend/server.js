@@ -109,7 +109,7 @@ app.post("/auth/register", async (req, res) => {
 
     const hash = await bcrypt.hash(password, 10);
     const result = await query(
-      "INSERT INTO users_v2 (name, email, password_hash, xp, level, rank) VALUES (?, ?, ?, 0, 1, 'Stickman')",
+      "INSERT INTO users_v2 (name, email, password_hash, xp, level, rank) VALUES (?, ?, ?, 0, 1, 'STICKMAN')",
       [name, email, hash]
     );
 
@@ -122,7 +122,7 @@ app.post("/auth/register", async (req, res) => {
       email,
       xp: 0,
       level: 1,
-      rank: "Stickman",
+      rank: "STICKMAN",
       token,
     });
   } catch (error) {
@@ -143,10 +143,10 @@ app.post("/auth/google", async (req, res) => {
       user = existing[0];
     } else {
       const result = await query(
-        "INSERT INTO users_v2 (name, email, password_hash, xp, level, rank) VALUES (?, ?, ?, 0, 1, 'Začátečník')",
+        "INSERT INTO users_v2 (name, email, password_hash, xp, level, rank) VALUES (?, ?, ?, 0, 1, 'STICKMAN')",
         [name || 'Google Uživatel', email, 'google_sso_' + uid]
       );
-      user = { id: result.insertId, name: name || 'Google Uživatel', email, xp: 0, level: 1, rank: 'Začátečník' };
+      user = { id: result.insertId, name: name || 'Google Uživatel', email, xp: 0, level: 1, rank: 'STICKMAN' };
     }
 
     const token = jwt.sign({ sub: user.id }, JWT_SECRET, { expiresIn: "7d" });
@@ -162,7 +162,7 @@ app.post("/auth/google", async (req, res) => {
     });
   } catch (error) {
     console.error("/auth/google error", error);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: error.message || error.toString() });
   }
 });
 
@@ -232,12 +232,12 @@ function calculateLevel(xp) {
 }
 
 function getRank(level) {
-  if (level < 5) return "Začátečník";
-  if (level < 10) return "Pokročilý";
-  if (level < 20) return "Atlet";
-  if (level < 30) return "Elita";
-  if (level < 50) return "Mistr";
-  return "Legenda";
+  if (level < 5) return "STICKMAN";
+  if (level < 10) return "GYM ENJOYER";
+  if (level < 20) return "GYM BRO";
+  if (level < 30) return "PR HUNTER";
+  if (level < 50) return "GYM RAT";
+  return "GYM REAPER";
 }
 
 app.post("/users/:id/workouts", auth, async (req, res) => {
